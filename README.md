@@ -29,13 +29,9 @@ By providing a structured PDF with bookmarks, it eliminates the time and effort 
 
 ## アプリケーションのライセンス遵守について / Compliance with Application Licensing
 
-本アプリは、使用しているPythonモジュールによりAGPL-3.0 Licenseが適用されており、オープンソースソフトウェアとして商用利用も可能です。  
-ただし、アプリを改変、再配布、またはネットワーク経由で提供する場合、AGPL-3.0の規約に従い、ソースコードを公開する必要があります。  
-この義務を遵守しない場合、AGPL-3.0に基づく利用許諾を受けられませんのでご注意ください。
+本アプリは、使用しているPythonモジュールによりAGPL-3.0 Licenseが適用されており、オープンソースソフトウェアとして商用利用も可能です。ただし、アプリを改変、再配布、またはネットワーク経由で提供する場合、AGPL-3.0の規約に従い、ソースコードを公開する必要があります。この義務を遵守しない場合、AGPL-3.0に基づく利用許諾を受けられませんのでご注意ください。
 
-This application is subject to the AGPL-3.0 License due to the Python modules it uses, making it open-source software available for commercial use.  
-However, if the application is modified, redistributed, or provided over a network, the source code must be made publicly available in accordance with AGPL-3.0 regulations.  
-Failure to comply with this obligation will result in the inability to receive usage permissions under AGPL-3.0. Please be aware of this requirement.
+This application is subject to the AGPL-3.0 License due to the Python modules it uses, making it open-source software available for commercial use. However, if the application is modified, redistributed, or provided over a network, the source code must be made publicly available in accordance with AGPL-3.0 regulations. Failure to comply with this obligation will result in the inability to receive usage permissions under AGPL-3.0. Please be aware of this requirement.
 
 ## 著作権情報・参考リンク / Copyright & Reference Links
 
