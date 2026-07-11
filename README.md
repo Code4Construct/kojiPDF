@@ -66,13 +66,13 @@ pip install -r requirements.txt
 ## 実行方法 / Usage
 
 ```bash
-python kojiPDF.py
+python kojiPDFv2.py
 ```
 
 ## プロジェクトリンク / Project Links
 
-- GitHub repository: https://github.com/Code4Construct/kojiPDFv210
-- GitHub Releases: https://github.com/Code4Construct/kojiPDFv210/releases
+- GitHub repository: https://github.com/Code4Construct/kojiPDF
+- GitHub Releases: https://github.com/Code4Construct/kojiPDF/releases
 - Release assets include the signed MSI installer and a portable ZIP containing the full `kojiPDFv2.dist` folder.
 - Code signing policy: `CODE_SIGNING_POLICY.md`
 
