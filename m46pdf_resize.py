@@ -17,6 +17,23 @@ def get_size(size):
     return size
 
 
+def pad_content_stream_boundaries(page):
+    doc = page.parent
+    for xref in page.get_contents():
+        stream = doc.xref_stream(xref)
+        if not stream:
+            continue
+
+        padded = stream
+        if padded[:1] not in b"\x00\t\n\f\r ":
+            padded = b"\n" + padded
+        if padded[-1:] not in b"\x00\t\n\f\r ":
+            padded = padded + b"\n"
+
+        if padded != stream:
+            doc.update_stream(xref, padded)
+
+
 def get_content_rect(page, padding=4):
     rects = []
     page_rect = page.cropbox
@@ -43,6 +60,24 @@ def get_content_rect(page, padding=4):
     return content_rect
 
 
+def has_annotations(doc):
+    return any(page.first_annot is not None for page in doc)
+
+
+def bake_annotations_into_content(doc):
+    if not has_annotations(doc):
+        return doc
+
+    if not hasattr(doc, "bake"):
+        raise RuntimeError(
+            "PDF注釈を本文へ焼き込むには PyMuPDF 1.24.2 以上が必要です。"
+            "requirements.txt に従って PyMuPDF を更新してください。"
+        )
+
+    doc.bake(annots=True, widgets=True)
+    return doc
+
+
 def normalize_rotation_doc(src_doc):
     normalized_doc = fitz.open()
 
@@ -53,6 +88,7 @@ def normalize_rotation_doc(src_doc):
 
         one_page_doc = fitz.open()
         one_page_doc.insert_pdf(src_doc, from_page=page.number, to_page=page.number)
+        pad_content_stream_boundaries(one_page_doc[0])
         one_page_doc[0].set_rotation(0)
 
         target_page = normalized_doc.new_page(width=page.rect.width, height=page.rect.height)
@@ -71,12 +107,13 @@ def normalize_rotation_doc(src_doc):
 
 def resize_doc_auto_orientation(src_doc, size="A4"):
     base_w, base_h = get_size(size)
+    bake_annotations_into_content(src_doc)
     normalized_doc = normalize_rotation_doc(src_doc)
     dst_doc = fitz.open()
 
     for page in normalized_doc:
-        rect = get_content_rect(page, padding=12)
-        visual_width, visual_height = rect.width, rect.height
+        page_rect = page.rect
+        visual_width, visual_height = page_rect.width, page_rect.height
 
         if visual_width > visual_height:
             target_w, target_h = max(base_w, base_h), min(base_w, base_h)
@@ -94,7 +131,7 @@ def resize_doc_auto_orientation(src_doc, size="A4"):
         target_rect = fitz.Rect(x, y, x + new_w, y + new_h)
 
         new_page = dst_doc.new_page(width=target_w, height=target_h)
-        new_page.show_pdf_page(target_rect, normalized_doc, page.number, clip=rect)
+        new_page.show_pdf_page(target_rect, normalized_doc, page.number)
 
         print(f"page {page.number + 1} resized")
 

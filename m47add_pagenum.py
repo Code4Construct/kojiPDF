@@ -2,6 +2,23 @@ from pathlib import Path
 import fitz  # PyMuPDF
 
 
+def pad_content_stream_boundaries(page):
+    doc = page.parent
+    for xref in page.get_contents():
+        stream = doc.xref_stream(xref)
+        if not stream:
+            continue
+
+        padded = stream
+        if padded[:1] not in b"\x00\t\n\f\r ":
+            padded = b"\n" + padded
+        if padded[-1:] not in b"\x00\t\n\f\r ":
+            padded = padded + b"\n"
+
+        if padded != stream:
+            doc.update_stream(xref, padded)
+
+
 def add_page_numbers_to_doc(
     doc,
     start_number=1,
@@ -13,7 +30,12 @@ def add_page_numbers_to_doc(
     fill_opacity=1.0,
 ):
     for page_index, page in enumerate(doc, start=start_number):
+        page.wrap_contents()
+        pad_content_stream_boundaries(page)
         rect = page.rect
+        rotation = page.rotation % 360
+        if rotation not in (0, 90, 180, 270):
+            rotation = 0
         text = str(page_index)
 
         # 文字幅を計算
@@ -25,15 +47,19 @@ def add_page_numbers_to_doc(
 
         x = rect.width - margin_right - text_width
         y = rect.height - margin_bottom
+        point = fitz.Point(x, y) * page.derotation_matrix
 
-        page.insert_text(
-            fitz.Point(x, y),
+        shape = page.new_shape()
+        shape.insert_text(
+            point,
             text,
             fontsize=font_size,
             fontname=fontname,
             fill=fill,
             fill_opacity=fill_opacity,
+            rotate=rotation,
         )
+        shape.commit(overlay=True)
 
         print(f"page {page_index} added")
 

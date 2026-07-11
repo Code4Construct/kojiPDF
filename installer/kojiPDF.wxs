@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Product
+    Id="*"
+    Name="kojiPDF"
+    Language="1041"
+    Version="2.1.0"
+    Manufacturer="Code4Construct"
+    UpgradeCode="{BA3A6517-33F2-4E98-9BB7-BB7A56E9563D}">
+
+    <Package
+      InstallerVersion="500"
+      Compressed="yes"
+      InstallScope="perMachine"
+      Platform="x64"
+      Description="kojiPDF PDF tool" />
+
+    <MajorUpgrade DowngradeErrorMessage="A newer version of kojiPDF is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <Icon Id="AppIcon.ico" SourceFile="$(var.ProjectDir)\assets\icons\smallicon_v2.ico" />
+    <Property Id="ARPPRODUCTICON" Value="AppIcon.ico" />
+    <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
+    <WixVariable Id="WixUILicenseRtf" Value="$(var.ProjectDir)\installer\license.rtf" />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="Open README.md" />
+    <Property Id="WixShellExecTarget" Value="[#ReadmeFile]" />
+    <CustomAction Id="OpenReadme" BinaryKey="WixCA" DllEntry="WixShellExec" Impersonate="yes" />
+
+    <UI>
+      <UIRef Id="WixUI_InstallDir" />
+      <UIRef Id="WixUI_ErrorProgressText" />
+      <Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="OpenReadme">WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 and NOT Installed</Publish>
+    </UI>
+
+    <Feature Id="MainFeature" Title="kojiPDF" Level="1">
+      <ComponentGroupRef Id="AppFiles" />
+      <ComponentRef Id="DocumentationFiles" />
+      <ComponentRef Id="ApplicationShortcuts" />
+      <ComponentRef Id="DesktopShortcut" />
+    </Feature>
+
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="ProgramFiles64Folder">
+        <Directory Id="INSTALLFOLDER" Name="kojiPDF">
+          <Component Id="DocumentationFiles" Guid="{8B7ED622-6758-4068-8CC8-9B1C65742114}">
+            <File Id="ReadmeFile" Source="$(var.ProjectDir)\README.md" KeyPath="yes" />
+            <File Id="LicenseFile" Source="$(var.ProjectDir)\LICENSE" />
+          </Component>
+        </Directory>
+      </Directory>
+      <Directory Id="DesktopFolder" />
+      <Directory Id="ProgramMenuFolder">
+        <Directory Id="ApplicationProgramsFolder" Name="kojiPDF">
+          <Component Id="ApplicationShortcuts" Guid="{C07E07F4-A7DB-4E8E-AE31-372E06255D0E}">
+            <Shortcut
+              Id="ApplicationStartMenuShortcut"
+              Name="kojiPDF"
+              Description="Launch kojiPDF"
+              Target="[INSTALLFOLDER]kojiPDFv2.exe"
+              WorkingDirectory="INSTALLFOLDER"
+              Icon="AppIcon.ico" />
+            <RemoveFolder Id="ApplicationProgramsFolder" On="uninstall" />
+            <RegistryValue
+              Root="HKCU"
+              Key="Software\Code4Construct\kojiPDF"
+              Name="installed"
+              Type="integer"
+              Value="1"
+              KeyPath="yes" />
+          </Component>
+        </Directory>
+      </Directory>
+    </Directory>
+
+    <DirectoryRef Id="DesktopFolder">
+      <Component Id="DesktopShortcut" Guid="{53E459D1-9056-4420-82B7-92121BC7A7DC}">
+        <Shortcut
+          Id="ApplicationDesktopShortcut"
+          Name="kojiPDF"
+          Description="Launch kojiPDF"
+          Target="[INSTALLFOLDER]kojiPDFv2.exe"
+          WorkingDirectory="INSTALLFOLDER"
+          Icon="AppIcon.ico" />
+        <RegistryValue
+          Root="HKCU"
+          Key="Software\Code4Construct\kojiPDF"
+          Name="desktopShortcut"
+          Type="integer"
+          Value="1"
+          KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+  </Product>
+</Wix>

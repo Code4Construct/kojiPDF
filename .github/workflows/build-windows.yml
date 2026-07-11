@@ -1,55 +1,787 @@
-name: Build Windows release artifacts
+name: Build Windows Installer
 
 on:
   workflow_dispatch:
+    inputs:
+      start_from:
+        description: "First stage to run"
+        required: true
+        default: "nuitka"
+        type: choice
+        options:
+          - nuitka
+          - wxs
+          - iss
+          - virustotal
+          - releases
+      stop_after:
+        description: "Last stage to run"
+        required: true
+        default: "iss"
+        type: choice
+        options:
+          - nuitka
+          - wxs
+          - iss
+          - virustotal
+          - releases
+      artifact_branch:
+        description: "Branch to search when reusing artifacts from earlier stages"
+        required: true
+        default: "main"
+        type: string
+      release_tag:
+        description: "Release tag for manual release runs. Empty uses the pushed tag."
+        required: false
+        default: ""
+        type: string
   push:
+    branches:
+      - main
     tags:
       - "v*"
 
+permissions:
+  actions: read
+  contents: write
+
+env:
+  APP_VERSION: "2.1.0"
+  SETUP_BASENAME: "kojiPDF_Setup_2.1.0"
+  PORTABLE_BASENAME: "kojiPDF_Portable_2.1.0"
+  DIST_ARTIFACT: "kojiPDF_2.1.0_nuitka_dist"
+  PORTABLE_ARTIFACT: "kojiPDF_Portable_2.1.0_zip"
+  MSI_ARTIFACT: "kojiPDF_Setup_2.1.0_msi"
+  EXE_ARTIFACT: "kojiPDF_Setup_2.1.0_exe"
+
 jobs:
-  build-windows:
-    runs-on: windows-latest
+  build-installer:
+    name: Build kojiPDF installers
+    runs-on: windows-2022
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
 
+      - name: Plan stages
+        id: plan
+        shell: powershell
+        env:
+          START_FROM: ${{ inputs.start_from }}
+          STOP_AFTER: ${{ inputs.stop_after }}
+          ARTIFACT_BRANCH: ${{ inputs.artifact_branch }}
+          RELEASE_TAG_INPUT: ${{ inputs.release_tag }}
+        run: |
+          $stages = @("nuitka", "wxs", "iss", "virustotal", "releases")
+
+          if ("${{ github.event_name }}" -eq "workflow_dispatch") {
+            $start = $env:START_FROM
+            $stop = $env:STOP_AFTER
+            $artifactBranch = $env:ARTIFACT_BRANCH
+          } else {
+            $start = "nuitka"
+            if ("${{ github.ref_type }}" -eq "tag") {
+              $stop = "releases"
+            } else {
+              $stop = "iss"
+            }
+            $artifactBranch = "${{ github.ref_name }}"
+          }
+
+          if ([string]::IsNullOrWhiteSpace($artifactBranch) -or $artifactBranch -eq "artifact_branch") {
+            $artifactBranch = "${{ github.ref_name }}"
+          }
+
+          $startIndex = [array]::IndexOf($stages, $start)
+          $stopIndex = [array]::IndexOf($stages, $stop)
+
+          if ($startIndex -lt 0) {
+            throw "Unknown start_from stage: $start"
+          }
+          if ($stopIndex -lt 0) {
+            throw "Unknown stop_after stage: $stop"
+          }
+          if ($startIndex -gt $stopIndex) {
+            throw "start_from must be the same as, or earlier than, stop_after."
+          }
+
+          foreach ($stage in $stages) {
+            $index = [array]::IndexOf($stages, $stage)
+            $shouldRun = ($index -ge $startIndex -and $index -le $stopIndex).ToString().ToLowerInvariant()
+            "run_$stage=$shouldRun" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          }
+
+          $runNuitka = $startIndex -le 0 -and $stopIndex -ge 0
+          $runWxs = $startIndex -le 1 -and $stopIndex -ge 1
+          $runIss = $startIndex -le 2 -and $stopIndex -ge 2
+          $runVirusTotal = $startIndex -le 3 -and $stopIndex -ge 3
+          $runReleases = $startIndex -le 4 -and $stopIndex -ge 4
+
+          $restoreDist = (-not $runNuitka) -and ($runWxs -or $runIss)
+          $restoreMsi = (-not $runWxs) -and ($runVirusTotal -or $runReleases)
+          $restoreExe = $false
+          $createPortable = $runNuitka -or $restoreDist
+          $restorePortable = (-not $createPortable) -and $runReleases
+          $needChecksums = $runVirusTotal -or $runReleases
+
+          "restore_dist=$($restoreDist.ToString().ToLowerInvariant())" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "restore_msi=$($restoreMsi.ToString().ToLowerInvariant())" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "restore_exe=$($restoreExe.ToString().ToLowerInvariant())" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "create_portable=$($createPortable.ToString().ToLowerInvariant())" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "restore_portable=$($restorePortable.ToString().ToLowerInvariant())" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "need_checksums=$($needChecksums.ToString().ToLowerInvariant())" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "artifact_branch=$artifactBranch" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
       - name: Set up Python
+        if: steps.plan.outputs.run_nuitka == 'true'
         uses: actions/setup-python@v5
         with:
           python-version: "3.10"
-          cache: "pip"
+          cache: pip
 
       - name: Install Python dependencies
-        run: python -m pip install --upgrade pip && pip install -r requirements.txt
+        if: steps.plan.outputs.run_nuitka == 'true'
+        run: python -m pip install -r requirements.txt
 
-      - name: Install Inno Setup
-        run: choco install innosetup --no-progress
-
-      - name: Clean previous build outputs
-        shell: pwsh
+      - name: Restore code signing certificate
+        if: steps.plan.outputs.run_nuitka == 'true' || steps.plan.outputs.run_wxs == 'true'
+        timeout-minutes: 2
+        shell: powershell
         run: |
-          Remove-Item -Recurse -Force kojiPDF.build, kojiPDF.dist, installer/output -ErrorAction SilentlyContinue
+          if ([string]::IsNullOrWhiteSpace("${{ secrets.WINDOWS_CODESIGN_PFX_BASE64 }}")) {
+            throw "WINDOWS_CODESIGN_PFX_BASE64 secret is not set."
+          }
+          if ([string]::IsNullOrWhiteSpace("${{ secrets.WINDOWS_CODESIGN_PASSWORD }}")) {
+            throw "WINDOWS_CODESIGN_PASSWORD secret is not set."
+          }
 
-      - name: Build standalone application with Nuitka
+          $certificatePath = Join-Path $env:RUNNER_TEMP "code4construct-codesign.pfx"
+          [IO.File]::WriteAllBytes(
+            $certificatePath,
+            [Convert]::FromBase64String("${{ secrets.WINDOWS_CODESIGN_PFX_BASE64 }}")
+          )
+
+          $certificate = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new(
+            $certificatePath,
+            "${{ secrets.WINDOWS_CODESIGN_PASSWORD }}",
+            [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::EphemeralKeySet
+          )
+          if (-not $certificate.HasPrivateKey) {
+            throw "Code signing certificate does not contain a private key."
+          }
+          Write-Host "Restored code signing certificate: $($certificate.Subject)"
+
+          "CODESIGN_CERTIFICATE_PATH=$certificatePath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "CODESIGN_CERTIFICATE_THUMBPRINT=$($certificate.Thumbprint)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Find SignTool
+        if: steps.plan.outputs.run_nuitka == 'true' || steps.plan.outputs.run_wxs == 'true'
+        shell: powershell
+        run: |
+          $signtool = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin" -Recurse -Filter signtool.exe -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -like "*\x64\signtool.exe" } |
+            Sort-Object FullName -Descending |
+            Select-Object -First 1 -ExpandProperty FullName
+
+          if ([string]::IsNullOrWhiteSpace($signtool)) {
+            throw "signtool.exe was not found."
+          }
+
+          Write-Host "Using signtool: $signtool"
+          "SIGNTOOL=$signtool" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Build standalone app with Nuitka
+        if: steps.plan.outputs.run_nuitka == 'true'
         shell: cmd
         run: build_nuitka.bat
 
-      - name: Build installer with Inno Setup
-        shell: pwsh
+      - name: Sign Nuitka app executable
+        if: steps.plan.outputs.run_nuitka == 'true'
+        shell: powershell
         run: |
-          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "installer\kojiPDF.iss"
+          $exe = "kojiPDFv2.dist\kojiPDFv2.exe"
+          if (-not (Test-Path $exe)) {
+            throw "Nuitka executable was not found: $exe"
+          }
 
-      - name: Upload standalone application artifact
+          & "$env:SIGNTOOL" sign `
+            /f "$env:CODESIGN_CERTIFICATE_PATH" `
+            /p "${{ secrets.WINDOWS_CODESIGN_PASSWORD }}" `
+            /fd SHA256 `
+            /tr http://timestamp.digicert.com `
+            /td SHA256 `
+            /d "kojiPDF" `
+            $exe
+
+          $signature = Get-AuthenticodeSignature -FilePath $exe
+          if ($null -eq $signature.SignerCertificate) {
+            throw "Nuitka executable does not have an Authenticode signer certificate."
+          }
+          if ($signature.SignerCertificate.Thumbprint -ne $env:CODESIGN_CERTIFICATE_THUMBPRINT) {
+            throw "Nuitka executable was signed by unexpected certificate: $($signature.SignerCertificate.Thumbprint)"
+          }
+          Write-Host "Nuitka executable is signed by: $($signature.SignerCertificate.Subject)"
+
+      - name: Upload Nuitka dist artifact
+        if: steps.plan.outputs.run_nuitka == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: kojiPDF-standalone
-          path: kojiPDF.dist/**
+          name: ${{ env.DIST_ARTIFACT }}
+          path: kojiPDFv2.dist
           if-no-files-found: error
+          retention-days: 30
 
-      - name: Upload installer artifact
+      - name: Restore latest Nuitka dist artifact
+        if: steps.plan.outputs.restore_dist == 'true'
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_NAME: ${{ env.DIST_ARTIFACT }}
+          ARTIFACT_BRANCH: ${{ steps.plan.outputs.artifact_branch }}
+          DOWNLOAD_DIR: kojiPDFv2.dist
+        run: |
+          New-Item -ItemType Directory -Force -Path $env:DOWNLOAD_DIR | Out-Null
+
+          $runs = gh run list `
+            --workflow "build-windows.yml" `
+            --branch $env:ARTIFACT_BRANCH `
+            --status completed `
+            --limit 50 `
+            --json databaseId |
+            ConvertFrom-Json
+
+          foreach ($run in $runs) {
+            if ([string]$run.databaseId -eq "${{ github.run_id }}") {
+              continue
+            }
+
+            $artifacts = gh api "repos/${{ github.repository }}/actions/runs/$($run.databaseId)/artifacts?per_page=100" | ConvertFrom-Json
+            $artifact = $artifacts.artifacts |
+              Where-Object { $_.name -eq $env:ARTIFACT_NAME -and -not $_.expired } |
+              Select-Object -First 1
+
+            if ($artifact) {
+              gh run download $run.databaseId --name $env:ARTIFACT_NAME --dir $env:DOWNLOAD_DIR
+              Write-Host "Restored $env:ARTIFACT_NAME from run $($run.databaseId)."
+              exit 0
+            }
+          }
+
+          throw "No reusable artifact found: $env:ARTIFACT_NAME on branch $env:ARTIFACT_BRANCH"
+
+      - name: Build portable ZIP
+        if: steps.plan.outputs.create_portable == 'true'
+        shell: powershell
+        run: |
+          $zip = "installer\output\$env:PORTABLE_BASENAME.zip"
+          if (-not (Test-Path "kojiPDFv2.dist")) {
+            throw "Nuitka dist folder was not found: kojiPDFv2.dist"
+          }
+          New-Item -ItemType Directory -Force -Path "installer\output" | Out-Null
+          if (Test-Path $zip) {
+            Remove-Item $zip -Force
+          }
+          Compress-Archive -Path "kojiPDFv2.dist" -DestinationPath $zip -CompressionLevel Optimal
+
+      - name: Verify portable ZIP output
+        if: steps.plan.outputs.create_portable == 'true'
+        shell: powershell
+        run: |
+          $zip = "installer\output\$env:PORTABLE_BASENAME.zip"
+          if (-not (Test-Path $zip)) {
+            throw "Portable ZIP was not generated: $zip"
+          }
+          Get-Item $zip | Select-Object FullName, Length, LastWriteTime
+
+      - name: Upload portable ZIP artifact
+        if: steps.plan.outputs.create_portable == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: kojiPDF-installer
-          path: installer/output/*.exe
+          name: ${{ env.PORTABLE_ARTIFACT }}
+          path: installer/output/${{ env.PORTABLE_BASENAME }}.zip
           if-no-files-found: error
+          retention-days: 30
+
+      - name: Restore latest portable ZIP artifact
+        if: steps.plan.outputs.restore_portable == 'true'
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_NAME: ${{ env.PORTABLE_ARTIFACT }}
+          ARTIFACT_BRANCH: ${{ steps.plan.outputs.artifact_branch }}
+          DOWNLOAD_DIR: installer/output
+        run: |
+          New-Item -ItemType Directory -Force -Path $env:DOWNLOAD_DIR | Out-Null
+
+          $runs = gh run list `
+            --workflow "build-windows.yml" `
+            --branch $env:ARTIFACT_BRANCH `
+            --status completed `
+            --limit 50 `
+            --json databaseId |
+            ConvertFrom-Json
+
+          foreach ($run in $runs) {
+            if ([string]$run.databaseId -eq "${{ github.run_id }}") {
+              continue
+            }
+
+            $artifacts = gh api "repos/${{ github.repository }}/actions/runs/$($run.databaseId)/artifacts?per_page=100" | ConvertFrom-Json
+            $artifact = $artifacts.artifacts |
+              Where-Object { $_.name -eq $env:ARTIFACT_NAME -and -not $_.expired } |
+              Select-Object -First 1
+
+            if ($artifact) {
+              gh run download $run.databaseId --name $env:ARTIFACT_NAME --dir $env:DOWNLOAD_DIR
+              Write-Host "Restored $env:ARTIFACT_NAME from run $($run.databaseId)."
+              exit 0
+            }
+          }
+
+          throw "No reusable artifact found: $env:ARTIFACT_NAME on branch $env:ARTIFACT_BRANCH"
+
+      - name: Install WiX Toolset
+        if: steps.plan.outputs.run_wxs == 'true'
+        shell: powershell
+        run: choco install wixtoolset --yes --no-progress
+
+      - name: Prepare MSI source folder
+        if: steps.plan.outputs.run_wxs == 'true'
+        shell: powershell
+        run: |
+          $source = "installer\msi-source"
+          if (Test-Path $source) {
+            Remove-Item $source -Recurse -Force
+          }
+          New-Item -ItemType Directory -Path $source | Out-Null
+          Copy-Item "kojiPDFv2.dist\*" $source -Recurse
+
+      - name: Build MSI with WiX Toolset
+        if: steps.plan.outputs.run_wxs == 'true'
+        shell: powershell
+        run: |
+          function Find-WixTool($name) {
+            $command = Get-Command $name -ErrorAction SilentlyContinue
+            if ($command) {
+              return $command.Source
+            }
+
+            $roots = @(
+              "${env:ProgramFiles(x86)}",
+              "${env:ProgramFiles}"
+            ) | Where-Object { $_ -and (Test-Path $_) }
+
+            foreach ($root in $roots) {
+              $match = Get-ChildItem -Path $root -Filter $name -Recurse -ErrorAction SilentlyContinue |
+                Where-Object { $_.FullName -like "*WiX*" } |
+                Select-Object -First 1
+              if ($match) {
+                return $match.FullName
+              }
+            }
+
+            throw "WiX tool was not found: $name"
+          }
+
+          $heat = Find-WixTool "heat.exe"
+          $candle = Find-WixTool "candle.exe"
+          $light = Find-WixTool "light.exe"
+          Write-Host "Using heat: $heat"
+          Write-Host "Using candle: $candle"
+          Write-Host "Using light: $light"
+
+          New-Item -ItemType Directory -Force -Path "installer\output" | Out-Null
+          New-Item -ItemType Directory -Force -Path "installer\wixobj" | Out-Null
+          & $heat dir "installer\msi-source" `
+            -cg AppFiles `
+            -dr INSTALLFOLDER `
+            -srd `
+            -sreg `
+            -gg `
+            -var var.SourceDir `
+            -out "installer\HarvestedFiles.wxs"
+
+          & $candle `
+            -nologo `
+            -arch x64 `
+            -ext WixUIExtension `
+            -ext WixUtilExtension `
+            -dSourceDir="installer\msi-source" `
+            -dProjectDir="$pwd" `
+            -out "installer\wixobj\" `
+            "installer\kojiPDF.wxs" `
+            "installer\HarvestedFiles.wxs"
+
+          & $light `
+            -nologo `
+            -ext WixUIExtension `
+            -ext WixUtilExtension `
+            -out "installer\output\$env:SETUP_BASENAME.msi" `
+            "installer\wixobj\kojiPDF.wixobj" `
+            "installer\wixobj\HarvestedFiles.wixobj"
+
+      - name: Sign MSI installer
+        if: steps.plan.outputs.run_wxs == 'true'
+        shell: powershell
+        run: |
+          $installer = "installer\output\$env:SETUP_BASENAME.msi"
+          if (-not (Test-Path $installer)) {
+            throw "MSI was not generated: $installer"
+          }
+
+          & "$env:SIGNTOOL" sign `
+            /f "$env:CODESIGN_CERTIFICATE_PATH" `
+            /p "${{ secrets.WINDOWS_CODESIGN_PASSWORD }}" `
+            /fd SHA256 `
+            /tr http://timestamp.digicert.com `
+            /td SHA256 `
+            /d "kojiPDF Installer" `
+            $installer
+
+          $signature = Get-AuthenticodeSignature -FilePath $installer
+          if ($null -eq $signature.SignerCertificate) {
+            throw "MSI installer does not have an Authenticode signer certificate."
+          }
+          if ($signature.SignerCertificate.Thumbprint -ne $env:CODESIGN_CERTIFICATE_THUMBPRINT) {
+            throw "MSI installer was signed by unexpected certificate: $($signature.SignerCertificate.Thumbprint)"
+          }
+          Write-Host "MSI installer is signed by: $($signature.SignerCertificate.Subject)"
+
+      - name: Verify MSI output
+        if: steps.plan.outputs.run_wxs == 'true'
+        shell: powershell
+        run: |
+          $installer = "installer\output\$env:SETUP_BASENAME.msi"
+          if (-not (Test-Path $installer)) {
+            throw "MSI was not generated: $installer"
+          }
+          Get-Item $installer | Select-Object FullName, Length, LastWriteTime
+
+      - name: Upload MSI artifact
+        if: steps.plan.outputs.run_wxs == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.MSI_ARTIFACT }}
+          path: installer/output/${{ env.SETUP_BASENAME }}.msi
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Restore latest MSI artifact
+        if: steps.plan.outputs.restore_msi == 'true'
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_NAME: ${{ env.MSI_ARTIFACT }}
+          ARTIFACT_BRANCH: ${{ steps.plan.outputs.artifact_branch }}
+          DOWNLOAD_DIR: installer/output
+        run: |
+          New-Item -ItemType Directory -Force -Path $env:DOWNLOAD_DIR | Out-Null
+
+          $runs = gh run list `
+            --workflow "build-windows.yml" `
+            --branch $env:ARTIFACT_BRANCH `
+            --status completed `
+            --limit 50 `
+            --json databaseId |
+            ConvertFrom-Json
+
+          foreach ($run in $runs) {
+            if ([string]$run.databaseId -eq "${{ github.run_id }}") {
+              continue
+            }
+
+            $artifacts = gh api "repos/${{ github.repository }}/actions/runs/$($run.databaseId)/artifacts?per_page=100" | ConvertFrom-Json
+            $artifact = $artifacts.artifacts |
+              Where-Object { $_.name -eq $env:ARTIFACT_NAME -and -not $_.expired } |
+              Select-Object -First 1
+
+            if ($artifact) {
+              gh run download $run.databaseId --name $env:ARTIFACT_NAME --dir $env:DOWNLOAD_DIR
+              Write-Host "Restored $env:ARTIFACT_NAME from run $($run.databaseId)."
+              exit 0
+            }
+          }
+
+          throw "No reusable artifact found: $env:ARTIFACT_NAME on branch $env:ARTIFACT_BRANCH"
+
+      - name: Install Inno Setup
+        if: steps.plan.outputs.run_iss == 'true'
+        shell: powershell
+        run: choco install innosetup --yes --no-progress
+
+      - name: Build installer with Inno Setup
+        if: steps.plan.outputs.run_iss == 'true'
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force -Path "installer\output" | Out-Null
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            throw "ISCC.exe was not found at $iscc"
+          }
+          & $iscc "installer\kojiPDF.iss"
+
+      - name: Verify EXE installer output
+        if: steps.plan.outputs.run_iss == 'true'
+        shell: powershell
+        run: |
+          $installer = "installer\output\$env:SETUP_BASENAME.exe"
+          if (-not (Test-Path $installer)) {
+            throw "Installer was not generated: $installer"
+          }
+          Get-Item $installer | Select-Object FullName, Length, LastWriteTime
+
+      - name: Upload EXE installer artifact
+        if: steps.plan.outputs.run_iss == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.EXE_ARTIFACT }}
+          path: installer/output/${{ env.SETUP_BASENAME }}.exe
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Restore latest EXE installer artifact
+        if: steps.plan.outputs.restore_exe == 'true'
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_NAME: ${{ env.EXE_ARTIFACT }}
+          ARTIFACT_BRANCH: ${{ steps.plan.outputs.artifact_branch }}
+          DOWNLOAD_DIR: installer/output
+        run: |
+          New-Item -ItemType Directory -Force -Path $env:DOWNLOAD_DIR | Out-Null
+
+          $runs = gh run list `
+            --workflow "build-windows.yml" `
+            --branch $env:ARTIFACT_BRANCH `
+            --status completed `
+            --limit 50 `
+            --json databaseId |
+            ConvertFrom-Json
+
+          foreach ($run in $runs) {
+            if ([string]$run.databaseId -eq "${{ github.run_id }}") {
+              continue
+            }
+
+            $artifacts = gh api "repos/${{ github.repository }}/actions/runs/$($run.databaseId)/artifacts?per_page=100" | ConvertFrom-Json
+            $artifact = $artifacts.artifacts |
+              Where-Object { $_.name -eq $env:ARTIFACT_NAME -and -not $_.expired } |
+              Select-Object -First 1
+
+            if ($artifact) {
+              gh run download $run.databaseId --name $env:ARTIFACT_NAME --dir $env:DOWNLOAD_DIR
+              Write-Host "Restored $env:ARTIFACT_NAME from run $($run.databaseId)."
+              exit 0
+            }
+          }
+
+          throw "No reusable artifact found: $env:ARTIFACT_NAME on branch $env:ARTIFACT_BRANCH"
+
+      - name: Calculate installer checksums
+        id: checksums
+        if: steps.plan.outputs.need_checksums == 'true'
+        shell: powershell
+        run: |
+          $exe = "installer\output\$env:SETUP_BASENAME.exe"
+          $msi = "installer\output\$env:SETUP_BASENAME.msi"
+          $portable = "installer\output\$env:PORTABLE_BASENAME.zip"
+
+          if (Test-Path $exe) {
+            $exeHash = (Get-FileHash -Algorithm SHA256 $exe).Hash.ToLowerInvariant()
+            "exe_sha256=$exeHash" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          } else {
+            "exe_sha256=" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          }
+
+          if (Test-Path $msi) {
+            $msiHash = (Get-FileHash -Algorithm SHA256 $msi).Hash.ToLowerInvariant()
+            "msi_sha256=$msiHash" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          } else {
+            "msi_sha256=" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          }
+
+          if (Test-Path $portable) {
+            $portableHash = (Get-FileHash -Algorithm SHA256 $portable).Hash.ToLowerInvariant()
+            "portable_sha256=$portableHash" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          } else {
+            "portable_sha256=" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          }
+
+      - name: Submit MSI to VirusTotal
+        id: virustotal
+        if: steps.plan.outputs.run_virustotal == 'true'
+        shell: powershell
+        env:
+          VIRUSTOTAL_API_KEY: ${{ secrets.VIRUSTOTAL_API_KEY }}
+          MSI_SHA256: ${{ steps.checksums.outputs.msi_sha256 }}
+        run: |
+          $msi = (Resolve-Path "installer\output\$env:SETUP_BASENAME.msi").Path
+          $msiHash = $env:MSI_SHA256
+
+          if ([string]::IsNullOrWhiteSpace($env:VIRUSTOTAL_API_KEY)) {
+            Write-Warning "VIRUSTOTAL_API_KEY is not set. Skipping VirusTotal upload."
+            "status=skipped" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+            "url=" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+            "analysis_url=" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+            exit 0
+          }
+
+          $uploadUrl = "https://www.virustotal.com/api/v3/files"
+          $msiSize = (Get-Item $msi).Length
+
+          if ($msiSize -gt 32MB) {
+            $uploadUrlResponse = & curl.exe --silent --show-error --request GET `
+              --url "https://www.virustotal.com/api/v3/files/upload_url" `
+              --header "x-apikey: $env:VIRUSTOTAL_API_KEY"
+
+            if ($LASTEXITCODE -ne 0) {
+              throw "VirusTotal upload URL request failed with exit code $LASTEXITCODE"
+            }
+
+            $uploadUrlJson = $uploadUrlResponse | ConvertFrom-Json
+            $uploadUrl = $uploadUrlJson.data
+            if ([string]::IsNullOrWhiteSpace($uploadUrl)) {
+              throw "VirusTotal did not return an upload URL. Response: $uploadUrlResponse"
+            }
+          }
+
+          $response = & curl.exe --silent --show-error --request POST `
+            --url "$uploadUrl" `
+            --header "x-apikey: $env:VIRUSTOTAL_API_KEY" `
+            --form "file=@$msi"
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "VirusTotal upload failed with exit code $LASTEXITCODE"
+          }
+
+          $json = $response | ConvertFrom-Json
+          $analysisId = $json.data.id
+          if ([string]::IsNullOrWhiteSpace($analysisId)) {
+            throw "VirusTotal did not return an analysis id. Response: $response"
+          }
+
+          $fileUrl = "https://www.virustotal.com/gui/file/$msiHash/detection"
+          $analysisUrl = "https://www.virustotal.com/gui/analysis/$analysisId"
+
+          "status=submitted" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "url=$fileUrl" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "analysis_url=$analysisUrl" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "analysis_id=$analysisId" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Verify VirusTotal has no MSI detections
+        id: vt_clean
+        if: steps.plan.outputs.run_releases == 'true'
+        shell: powershell
+        env:
+          VIRUSTOTAL_API_KEY: ${{ secrets.VIRUSTOTAL_API_KEY }}
+          MSI_SHA256: ${{ steps.checksums.outputs.msi_sha256 }}
+          VT_ANALYSIS_ID: ${{ steps.virustotal.outputs.analysis_id }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:VIRUSTOTAL_API_KEY)) {
+            throw "VIRUSTOTAL_API_KEY is required to publish a release. Release is allowed only for MSI files with zero VirusTotal detections."
+          }
+
+          if ([string]::IsNullOrWhiteSpace($env:MSI_SHA256)) {
+            throw "MSI SHA256 is empty. Cannot verify VirusTotal result."
+          }
+
+          $headers = @{
+            "x-apikey" = $env:VIRUSTOTAL_API_KEY
+          }
+
+          $stats = $null
+
+          if (-not [string]::IsNullOrWhiteSpace($env:VT_ANALYSIS_ID)) {
+            for ($i = 1; $i -le 20; $i++) {
+              $analysis = Invoke-RestMethod `
+                -Method Get `
+                -Uri "https://www.virustotal.com/api/v3/analyses/$env:VT_ANALYSIS_ID" `
+                -Headers $headers
+
+              if ($analysis.data.attributes.status -eq "completed") {
+                $stats = $analysis.data.attributes.stats
+                break
+              }
+
+              Write-Host "VirusTotal analysis is $($analysis.data.attributes.status). Waiting before retry $i/20..."
+              Start-Sleep -Seconds 15
+            }
+          }
+
+          if ($null -eq $stats) {
+            $fileReport = Invoke-RestMethod `
+              -Method Get `
+              -Uri "https://www.virustotal.com/api/v3/files/$env:MSI_SHA256" `
+              -Headers $headers
+            $stats = $fileReport.data.attributes.last_analysis_stats
+          }
+
+          if ($null -eq $stats) {
+            throw "VirusTotal returned no analysis stats for MSI hash $env:MSI_SHA256."
+          }
+
+          $malicious = [int]$stats.malicious
+          $suspicious = [int]$stats.suspicious
+          $url = "https://www.virustotal.com/gui/file/$env:MSI_SHA256/detection"
+
+          if ($malicious -ne 0 -or $suspicious -ne 0) {
+            throw "Release blocked. VirusTotal detections are malicious=$malicious suspicious=$suspicious. $url"
+          }
+
+          "url=$url" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "malicious=$malicious" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "suspicious=$suspicious" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Resolve release tag
+        id: release_tag
+        if: steps.plan.outputs.run_releases == 'true'
+        shell: powershell
+        env:
+          RELEASE_TAG_INPUT: ${{ inputs.release_tag }}
+        run: |
+          if ("${{ github.ref_type }}" -eq "tag") {
+            $tag = "${{ github.ref_name }}"
+          } else {
+            $tag = $env:RELEASE_TAG_INPUT
+          }
+
+          if ([string]::IsNullOrWhiteSpace($tag)) {
+            throw "release_tag is required when manually publishing a release from a branch."
+          }
+
+          "tag=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Prepare release notes
+        if: steps.plan.outputs.run_releases == 'true'
+        shell: powershell
+        env:
+          MSI_SHA256: ${{ steps.checksums.outputs.msi_sha256 }}
+          PORTABLE_SHA256: ${{ steps.checksums.outputs.portable_sha256 }}
+          VT_URL: ${{ steps.vt_clean.outputs.url }}
+          VT_MALICIOUS: ${{ steps.vt_clean.outputs.malicious }}
+          VT_SUSPICIOUS: ${{ steps.vt_clean.outputs.suspicious }}
+          RELEASE_TAG: ${{ steps.release_tag.outputs.tag }}
+        run: |
+          @"
+          ## kojiPDF $env:RELEASE_TAG
+
+          Windows MSI installer and portable ZIP built by GitHub Actions.
+
+          - MSI: $env:SETUP_BASENAME.msi
+          - MSI SHA256: $env:MSI_SHA256
+          - VirusTotal MSI check: $env:VT_URL
+          - VirusTotal detections: malicious=$env:VT_MALICIOUS suspicious=$env:VT_SUSPICIOUS
+          - Portable ZIP: $env:PORTABLE_BASENAME.zip
+          - Portable ZIP SHA256: $env:PORTABLE_SHA256
+          "@ | Set-Content -Path release-notes.md -Encoding utf8
+
+      - name: Publish GitHub Release
+        if: steps.plan.outputs.run_releases == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.release_tag.outputs.tag }}
+          body_path: release-notes.md
+          files: |
+            installer/output/${{ env.SETUP_BASENAME }}.msi
+            installer/output/${{ env.PORTABLE_BASENAME }}.zip
+          fail_on_unmatched_files: true

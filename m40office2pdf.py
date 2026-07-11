@@ -1,11 +1,19 @@
 import os
 import tempfile
-import win32com.client
-import pythoncom
 import fitz  # PyMuPDF
 
+WORD_EXTENSIONS = {'.doc', '.docx', '.docm'}
+EXCEL_EXTENSIONS = {'.xls', '.xlsx', '.xlsm'}
+POWERPOINT_EXTENSIONS = {'.ppt', '.pptx', '.pptm'}
+SUPPORTED_OFFICE_EXTENSIONS = WORD_EXTENSIONS | EXCEL_EXTENSIONS | POWERPOINT_EXTENSIONS
+
+
 def convert_word_to_pdf(input_path, output_path):
+    import pythoncom
+    import win32com.client
+
     pythoncom.CoInitialize()
+    word = None
     try:
         word = win32com.client.Dispatch("Word.Application")
         word.Visible = False
@@ -16,20 +24,27 @@ def convert_word_to_pdf(input_path, output_path):
     except Exception as e:
         print(f"Word変換エラー: {e}")
     finally:
-        word.Quit()
-        del word
+        if word:
+            word.Quit()
+            del word
         pythoncom.CoUninitialize()
 
 def convert_excel_to_pdf_with_bookmarks(input_path, output_path):
+    import pythoncom
+    import win32com.client
+
     pythoncom.CoInitialize()
+    excel = None
     try:
         excel = win32com.client.Dispatch("Excel.Application")
         excel.DisplayAlerts = False
         excel.Visible = False
         wb = excel.Workbooks.Open(os.path.abspath(input_path))
         temp_files = []
+        visible_sheets = [sheet for sheet in wb.Sheets if sheet.Visible == -1]
+        add_sheet_bookmarks = len(visible_sheets) >= 2
 
-        for i, sheet in enumerate(wb.Sheets):
+        for i, sheet in enumerate(visible_sheets):
             sheet_name = sheet.Name
             temp_pdf_path = os.path.join(tempfile.gettempdir(), f"{sheet_name}_{i}.pdf")
 
@@ -42,12 +57,13 @@ def convert_excel_to_pdf_with_bookmarks(input_path, output_path):
                 print(f"エクスポート失敗: {sheet_name}, エラー: {e}")  # エクスポート失敗した場合のエラーメッセージ
 
         wb.Close(False)
-        merge_pdfs_with_bookmarks(temp_files, output_path)
+        merge_pdfs_with_bookmarks(temp_files, output_path, add_bookmarks=add_sheet_bookmarks)
     except Exception as e:
         print(f"Excel変換エラー: {e}")
     finally:
-        excel.Quit()
-        del excel
+        if excel:
+            excel.Quit()
+            del excel
         pythoncom.CoUninitialize()
 
 def remove_pdf_bookmarks(pdf_path):
@@ -62,6 +78,9 @@ def remove_pdf_bookmarks(pdf_path):
 
 
 def convert_pptx_to_pdf(input_path, output_path, ppt_slide_bookmarks=True):
+    import pythoncom
+    import win32com.client
+
     pythoncom.CoInitialize()
     ppt_app = None
     try:
@@ -80,7 +99,7 @@ def convert_pptx_to_pdf(input_path, output_path, ppt_slide_bookmarks=True):
             del ppt_app
         pythoncom.CoUninitialize()
 
-def merge_pdfs_with_bookmarks(temp_files, output_path):
+def merge_pdfs_with_bookmarks(temp_files, output_path, add_bookmarks=True):
     merged_pdf = fitz.open()
     page_index = 0
     toc = []
@@ -88,11 +107,13 @@ def merge_pdfs_with_bookmarks(temp_files, output_path):
     for name, pdf_path in temp_files:
         pdf = fitz.open(pdf_path)
         merged_pdf.insert_pdf(pdf)
-        toc.append([1, name, page_index + 1])
+        if add_bookmarks:
+            toc.append([1, name, page_index + 1])
         page_index += pdf.page_count
         pdf.close()
 
-    merged_pdf.set_toc(toc)
+    if add_bookmarks:
+        merged_pdf.set_toc(toc)
     merged_pdf.save(output_path)
     merged_pdf.close()
 
@@ -112,11 +133,11 @@ def convert_to_pdf(input_path, ppt_slide_bookmarks=True):
 
     try:
         ext = ext.lower()
-        if ext in ['.doc', '.docx']:
+        if ext in WORD_EXTENSIONS:
             convert_word_to_pdf(input_path, output_path)
-        elif ext in ['.xls', '.xlsx']:
+        elif ext in EXCEL_EXTENSIONS:
             convert_excel_to_pdf_with_bookmarks(input_path, output_path)
-        elif ext in ['.ppt', '.pptx']:
+        elif ext in POWERPOINT_EXTENSIONS:
             convert_pptx_to_pdf(input_path, output_path, ppt_slide_bookmarks)
         else:
             print("対応していないファイル形式です。（対応形式: .doc, .docx, .xls, .xlsx, .ppt, .pptx）")

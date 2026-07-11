@@ -12,16 +12,27 @@ dist/
 *.onefile-build/
 installer/output/
 
+# Local code signing certificates
+*.pfx
+*.p12
+
 # Temporary PDF outputs
 *temp.PDF
+*.tmp.pdf
+*.no_bookmarks.pdf
 temp_folder/
+tmp_refactor_check/
+Code4Construct_戦略会議_テスト資料/
 
 # Virtual environments
 .venv/
 venv/
 
-# Editor settings
+# Local editor/tool settings
 .vscode/
+.qodo/
+.gitignore
 
-# Internal documentation
+# Local planning/build notes
 Windowsアプリ化手順書.md
+整理計画.md

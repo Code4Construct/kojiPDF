@@ -4,8 +4,10 @@ class FileSelectorApp:
     def __init__(self, root, message):
         """引数として受け取ったメッセージを表示"""
         self.root = root
+        self.result = False
         self.root.title("工事検査用PDFファイル作成アプリ")
         self.root.geometry("800x200")  # 高さを少し広げてボタンのスペースを確保
+        self.root.protocol("WM_DELETE_WINDOW", self.on_quit_button_click)
         self.root.after(0, self._center_and_bring_to_front)
 
         # 引数で受け取ったメッセージをラベルに表示
@@ -31,12 +33,14 @@ class FileSelectorApp:
     def on_continue_button_click(self):
         """続けるボタンが押された時の処理"""
         print("続けるボタンが押されました。プログラムを継続します。")
+        self.result = True
         self.root.quit()  # メインループを終了
         self.root.destroy()  # ウィンドウを破棄
 
     def on_quit_button_click(self):
         """終了ボタンが押された時の処理"""
         print("終了ボタンが押されました。プログラムを終了します。")
+        self.result = False
         self.root.quit()  # メインループを終了
         self.root.destroy()  # ウィンドウを破棄
 
@@ -57,6 +61,7 @@ def main(message):
     root = tk.Tk()
     app = FileSelectorApp(root, message)  # メッセージを引数として渡す
     root.mainloop()
+    return app.result
 
 if __name__ == "__main__":
     # 処理に応じたメッセージ

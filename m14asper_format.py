@@ -1,9 +1,7 @@
 import re
 
-from pandas import DataFrame
 
-
-def modify_pdf_names_in_all_columns(df: DataFrame) -> DataFrame:
+def modify_pdf_names_in_all_columns(df):
     """
     電脳ASPerの出力名を、しおり表示用・ソート用に整えます。
 
@@ -21,12 +19,15 @@ def modify_pdf_names_in_all_columns(df: DataFrame) -> DataFrame:
                 value = re.sub(r"^(\d{2})-", r"", value)
         return value
 
-    df = df.copy()
-    for column in df.columns:
-        if column != "Full Path":
-            df[column] = df[column].apply(modify_name)
+    rows = []
+    for row in df:
+        new_row = row.copy()
+        for column, value in row.items():
+            if column != "Full Path":
+                new_row[column] = modify_name(value)
+        rows.append(new_row)
 
-    return df
+    return rows
 
 
 def last_bookmarks_rename(output_pdf):

@@ -1,67 +1,55 @@
 import fitz  # PyMuPDF
 
-def make_newentry(entry, Po_Z,Bfont):
-    """
-    各しおりエントリにリンク情報を追加する。
 
-    Args:
-        entry (list): しおりのエントリ [レベル, タイトル, ページ番号]。
-        Po_Z (tuple): (x座標, y座標, ズーム) のタプル。
+def make_newentry(entry, position_zoom, bookmark_font):
+    level, title, page = entry
+    color, bold, italic = bookmark_font
+    x, y, zoom = position_zoom
 
-    Returns:
-        str: しおりエントリにリンク情報を追加したJSON風の文字列。
-    """
-    return str(entry)[:-1]+ ",{\"kind\": fitz.LINK_GOTO, \"page\": "+str(entry[2])+", \"to\": fitz.Point("+str(Po_Z[0])+","+str(Po_Z[1])+"), \"zoom\": "+str(Po_Z[2])+", \"color\": "+str(Bfont[0])+", \"bold\": "+str(Bfont[1])+", \"italic\": "+str(Bfont[2])+"}]"
+    return [
+        level,
+        title,
+        page,
+        {
+            "kind": fitz.LINK_GOTO,
+            "page": page,
+            "to": fitz.Point(x, y),
+            "zoom": zoom,
+            "color": color,
+            "bold": bold,
+            "italic": italic,
+        },
+    ]
 
-def make_newtoc(toc, Po_Zs,Bfonts):
-    """
-    しおりリスト全体にリンク情報を追加する。
 
-    Args:
-        toc (list): しおりのリスト [[レベル, タイトル, ページ番号], ...]。
-        Po_Zs (dict): ページ番号をキー、(x座標, y座標, ズーム) のタプルを値とする辞書。
-
-    Returns:
-        str: 変換後のしおりデータをJSON風の文字列として返す。
-    """
-    print("　変換後のしおりデータをJSON風の文字列として作成しています。")
+def make_newtoc(toc, position_zooms, bookmark_fonts):
+    print("しおりデータを作成しています。")
     entries = []
+
     for entry in toc:
-        level, title, page = entry
-        Bfont=Bfonts.get((title,page), ((0, 0, 0), False, False))  # そのページの座標とズームを取得 tocは１ページからPo_Zsは０ページから
-        Po_Z = Po_Zs.get(page)  # そのページの座標とズームを取得 tocは１ページからPo_Zsは０ページから
-        entries += [make_newentry(entry, Po_Z,Bfont)] #この[]がリスト化してくれるのか。
-    return "["+",".join(entries)+"]"
-        #参考return "["+",".join([add_link_to_entry(entry) for entry in toc])+"]"#文字列
+        _level, title, page = entry
+        bookmark_font = bookmark_fonts.get((title, page), ((0, 0, 0), False, False))
+        position_zoom = position_zooms.get(page)
+        if position_zoom is None:
+            entries.append(entry)
+            continue
+
+        entries.append(make_newentry(entry, position_zoom, bookmark_font))
+
+    return entries
 
 
 if __name__ == "__main__":
-    # 元の目次データ
     toc = [
-        [1, '完成文書(未分類)', 1],
-        [2, '打合せ簿【提出】', 1],
-        [3, 'ｶ鑑_R6.12　履行報告書.pdf', 1],
-        [3, 'ﾃ00_R6.12履行報告書.pdf', 2]
+        [1, "sample", 1],
+        [2, "sample-child", 2],
     ]
-
-    # しおりのフォント情報（タイトルとページ番号のペアをキー）
-    Bfonts = {
-        ('完成文書(未分類)', 1): ((0, 0, 0), False, False),
-        ('打合せ簿【提出】', 1): ((255, 0, 0), True, True),
-        ('打合せ簿【提出】', 2): ((0, 128, 0), True, True)
+    bookmark_fonts = {
+        ("sample", 1): ((0, 0, 0), False, False),
+        ("sample-child", 2): ((1, 0, 0), True, False),
     }
-
-    # ページごとのリンク座標とズーム情報
-    Po_Zs = {
+    position_zooms = {
         1: (100.0, 100.0, 0),
         2: (0.0, 100.0, 2),
-        3: (100.0, 0.0, 1.5)
     }
-
-    # 変換後の目次データ
-    new_toc = make_newtoc(toc, Po_Zs, Bfonts)
-
-    # 出力確認
-    print(new_toc)
-
-
+    print(make_newtoc(toc, position_zooms, bookmark_fonts))

@@ -1,75 +1,115 @@
+import ctypes
 import os
+import queue
 import sys
-import tkinter as tk
 from datetime import datetime
+
+
+def configure_tcl_tk_paths():
+    candidate_roots = [
+        os.path.dirname(sys.executable),
+        os.path.dirname(os.path.abspath(__file__)),
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "kojiPDFv2.dist"),
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "kojiPDF.dist"),
+    ]
+
+    for root in candidate_roots:
+        tcl_dir = os.path.join(root, "tcl")
+        tk_dir = os.path.join(root, "tk")
+        if os.path.exists(os.path.join(tcl_dir, "init.tcl")) and os.path.exists(os.path.join(tk_dir, "tk.tcl")):
+            os.environ.setdefault("TCL_LIBRARY", tcl_dir)
+            os.environ.setdefault("TK_LIBRARY", tk_dir)
+            break
+
+
+configure_tcl_tk_paths()
+
+import tkinter as tk
 from tkinter import filedialog, messagebox, scrolledtext
 
 import ttkbootstrap as tb
 from PIL import Image, ImageDraw, ImageFont, ImageTk
 
+WINDOW_WIDTH = 900
+WINDOW_HEIGHT = 850
+CONTENT_MAX_WIDTH = 880
+MIN_WINDOW_WIDTH = 860
+MIN_WINDOW_HEIGHT = 560
+SCREEN_MARGIN_WIDTH = 40
+SCREEN_MARGIN_HEIGHT = 70
+WINDOW_HEIGHT_PADDING = 12
+TK_SCALING_BASELINE = 96 / 72
+WINDOWS_BASELINE_DPI = 96
+APP_BG = "#e2e8f0"
+PANEL_BG = "#ffffff"
+BAND_BG = "#fbfdff"
+SUBTLE_BG = "#edf3f8"
+BORDER_COLOR = "#c8d3df"
+TEXT_COLOR = "#102033"
+MUTED_TEXT_COLOR = "#33485c"
+SECTION_TEXT_COLOR = "#073f66"
+STATUS_TEXT_COLOR = "#516475"
+RUN_BUTTON_FILL = "#8f1d2c"
+RUN_BUTTON_FILL_HOVER = "#a92536"
 
-def resource_path(relative_path):
-    """Return a path that works both from source and from a frozen executable."""
-    try:
-        base_path = sys._MEIPASS
-    except Exception:
-        base_path = os.path.dirname(os.path.abspath(__file__))
 
-    return os.path.join(base_path, relative_path)
+def _scaled_pixel(value, factor):
+    if value == 0:
+        return 0
+    return max(1, int(round(value * factor)))
+
+
+def get_window_dpi(window):
+    if sys.platform == "win32":
+        hwnd = None
+        try:
+            hwnd = window.winfo_id()
+            dpi = ctypes.windll.user32.GetDpiForWindow(hwnd)
+            if dpi:
+                return int(dpi)
+        except (AttributeError, OSError, tk.TclError):
+            pass
+
+        if hwnd is not None:
+            hdc = None
+            try:
+                hdc = ctypes.windll.user32.GetDC(hwnd)
+                dpi = ctypes.windll.gdi32.GetDeviceCaps(hdc, 88)
+                if dpi:
+                    return int(dpi)
+            except (AttributeError, OSError):
+                pass
+            finally:
+                if hdc:
+                    ctypes.windll.user32.ReleaseDC(hwnd, hdc)
+
+    return int(round(float(window.tk.call("tk", "scaling")) * 72))
+
+
+def find_resource_path(filename):
+    candidate_roots = [
+        os.path.dirname(sys.executable),
+        os.path.dirname(os.path.abspath(__file__)),
+    ]
+    for root in candidate_roots:
+        for relative_path in (filename, os.path.join("assets", "icons", filename)):
+            path = os.path.join(root, relative_path)
+            if os.path.exists(path):
+                return path
+    return None
 
 
 def debug_log(message):
     local_app_data = os.environ.get("LOCALAPPDATA", os.path.expanduser("~"))
     log_dir = os.path.join(local_app_data, "kojiPDF")
-    os.makedirs(log_dir, exist_ok=True)
-    log_path = os.path.join(log_dir, "kojiPDF_startup.log")
-    with open(log_path, "a", encoding="utf-8") as log_file:
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        log_file.write(f"[{timestamp}] {message}\n")
-
-
-class FlagButton(tk.Label):
-    def __init__(self, master, flag, command, tooltip_text="", **kwargs):
-        self.bg_color = kwargs.pop("bg", "#ffffff")
-        super().__init__(
-            master,
-            bd=0,
-            bg=self.bg_color,
-            cursor="hand2",
-            **kwargs,
-        )
-        self.flag = flag
-        self.command = command
-        self.tooltip_text = tooltip_text
-        self.checked = False
-        self.hover = False
-        self.images = {}
-        self.bind("<Button-1>", self._click)
-        self.bind("<Enter>", self._enter)
-        self.bind("<Leave>", self._leave)
-        self.draw()
-
-    def set_checked(self, checked):
-        self.checked = checked
-        self.draw()
-
-    def _click(self, _event):
-        self.command()
-
-    def _enter(self, _event):
-        self.hover = True
-        self.draw()
-
-    def _leave(self, _event):
-        self.hover = False
-        self.draw()
-
-    def draw(self):
-        state = "checked" if self.checked else "hover" if self.hover else "normal"
-        if state not in self.images:
-            self.images[state] = make_flag_image(self.flag, state)
-        self.configure(bg=self.bg_color, image=self.images[state])
-        self.image = self.images[state]
+    try:
+        os.makedirs(log_dir, exist_ok=True)
+        log_path = os.path.join(log_dir, "kojiPDF_startup.log")
+        with open(log_path, "a", encoding="utf-8") as log_file:
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            log_file.write(f"[{timestamp}] {message}\n")
+    except OSError:
+        pass
 
 
 def _circle_mask(size, scale):
@@ -83,7 +123,7 @@ def _scaled_points(points, scale):
     return [(x * scale, y * scale) for x, y in points]
 
 
-def make_flag_image(flag, state):
+def make_flag_image(flag, state, ui_scale=1.0):
     size = 44
     flag_size = 36
     offset = 4
@@ -121,17 +161,18 @@ def make_flag_image(flag, state):
         glow.alpha_composite(canvas)
         canvas = glow
 
-    image = canvas.resize((size, size), Image.Resampling.LANCZOS)
+    display_size = _scaled_pixel(size, ui_scale)
+    image = canvas.resize((display_size, display_size), Image.Resampling.LANCZOS)
     return ImageTk.PhotoImage(image)
 
 
-def make_run_image(text, hover=False):
+def make_run_image(text, hover=False, ui_scale=1.0):
     size = 74
     scale = 4
     image = Image.new("RGBA", (size * scale, size * scale), (255, 255, 255, 0))
     draw = ImageDraw.Draw(image)
-    fill = "#8f1d2c" if not hover else "#a92536"
-    button_fill = "#eaf6fc" if hover else "#e7ecf2"
+    fill = RUN_BUTTON_FILL_HOVER if hover else RUN_BUTTON_FILL
+    button_fill = "#eaf6fc" if hover else SUBTLE_BG
     draw.ellipse((1 * scale, 1 * scale, 73 * scale, 73 * scale), fill=button_fill)
     draw.ellipse((6 * scale, 6 * scale, 68 * scale, 68 * scale), fill=fill)
     for font_name in ("meiryob.ttc", "meiryo.ttc", "arialbd.ttf"):
@@ -146,14 +187,70 @@ def make_run_image(text, hover=False):
     x = (size * scale - (bbox[2] - bbox[0])) / 2
     y = (size * scale - (bbox[3] - bbox[1])) / 2 - 2 * scale
     draw.text((x, y), text, fill="#ffffff", font=font)
-    image = image.resize((size, size), Image.Resampling.LANCZOS)
+    display_size = _scaled_pixel(size, ui_scale)
+    image = image.resize((display_size, display_size), Image.Resampling.LANCZOS)
     return ImageTk.PhotoImage(image)
 
 
-def make_intro_icon_image():
-    image = Image.open(resource_path("smallicon_v2.png")).convert("RGBA")
-    image = image.resize((62, 62), Image.Resampling.LANCZOS)
-    return ImageTk.PhotoImage(image)
+def make_intro_icon_image(ui_scale=1.0):
+    icon_path = find_resource_path("smallicon_v2.png")
+    if icon_path is None:
+        debug_log("Intro icon not found: smallicon_v2.png")
+        return None
+
+    try:
+        image = Image.open(icon_path).convert("RGBA")
+        size = _scaled_pixel(62, ui_scale)
+        image = image.resize((size, size), Image.Resampling.LANCZOS)
+        return ImageTk.PhotoImage(image)
+    except (OSError, tk.TclError) as exc:
+        debug_log(f"Intro icon load failed: {icon_path}: {exc}")
+        return None
+
+
+class FlagButton(tk.Label):
+    def __init__(self, master, flag, command, tooltip_text="", ui_scale=1.0, **kwargs):
+        self.bg_color = kwargs.pop("bg", "#ffffff")
+        super().__init__(
+            master,
+            bd=0,
+            bg=self.bg_color,
+            cursor="hand2",
+            **kwargs,
+        )
+        self.flag = flag
+        self.command = command
+        self.tooltip_text = tooltip_text
+        self.ui_scale = ui_scale
+        self.checked = False
+        self.hover = False
+        self.images = {}
+        self.bind("<Button-1>", self._click)
+        self.bind("<Enter>", self._enter)
+        self.bind("<Leave>", self._leave)
+        self.draw()
+
+    def set_checked(self, checked):
+        self.checked = checked
+        self.draw()
+
+    def _click(self, _event):
+        self.command()
+
+    def _enter(self, _event):
+        self.hover = True
+        self.draw()
+
+    def _leave(self, _event):
+        self.hover = False
+        self.draw()
+
+    def draw(self):
+        state = "checked" if self.checked else "hover" if self.hover else "normal"
+        if state not in self.images:
+            self.images[state] = make_flag_image(self.flag, state, self.ui_scale)
+        self.configure(bg=self.bg_color, image=self.images[state])
+        self.image = self.images[state]
 
 
 class FileSelectorApp:
@@ -163,19 +260,29 @@ class FileSelectorApp:
         self.selected_file = None
         self.accepted = False
         self.retry_requested = False
+        self._progress_queue = queue.Queue()
+        self._progress_poll_after_id = None
         self.language = "ja"
         self.color_choices = {
             "Red": (1, 0, 0),
-            "Black": (0, 0, 0),
             "Blue": (0, 0, 1),
-            "Gray": (0.5, 0.5, 0.5),
+            "Black": (0, 0, 0),
         }
 
         self.window = tb.Window(themename="flatly")
+        self.tk_scaling = float(self.window.tk.call("tk", "scaling"))
+        self.ui_scale = self.tk_scaling / TK_SCALING_BASELINE
+        self.current_dpi = get_window_dpi(self.window)
+        self._dpi_status_after_id = None
+        debug_log(
+            "Tk DPI scaling initialized: "
+            f"tk_scaling={self.tk_scaling:.4f}, ui_scale={self.ui_scale:.4f}, "
+            f"dpi={self.current_dpi}, screen={self.window.winfo_screenwidth()}x{self.window.winfo_screenheight()}"
+        )
         self.window.title("kojiPDF - Built with Python by Code4Construct")
-        self.window.geometry("790x665")
-        self.window.minsize(760, 640)
-        self.window.configure(bg="#e7ecf2")
+        self.window.geometry(f"{self._px(WINDOW_WIDTH)}x{self._px(WINDOW_HEIGHT)}")
+        self.window.minsize(self._px(MIN_WINDOW_WIDTH), self._px(MIN_WINDOW_HEIGHT))
+        self.window.configure(bg=APP_BG)
         self.window.protocol("WM_DELETE_WINDOW", self.cancel)
 
         self._build_window()
@@ -184,98 +291,163 @@ class FileSelectorApp:
         self.toggle_collapse_spinbox()
         self.toggle_page_number_options()
         self.toggle_office_options()
+        self._update_dpi_status()
+        self.window.bind("<Configure>", self._schedule_dpi_status_update, add="+")
         debug_log("Tkinter UI loaded successfully")
+
+    def _px(self, value):
+        return _scaled_pixel(int(value), self.ui_scale)
+
+    def _pad(self, *values):
+        return tuple(self._px(value) for value in values)
+
+    def _scale_padding(self, value):
+        if isinstance(value, tuple):
+            return self._pad(*value)
+        return self._px(value)
+
+    def _format_dpi_status(self):
+        dpi = max(1, get_window_dpi(self.window))
+        percent = int(round(dpi / WINDOWS_BASELINE_DPI * 100))
+        return dpi, f"{dpi} DPI / {percent}%"
+
+    def _schedule_dpi_status_update(self, _event=None):
+        if self._dpi_status_after_id is not None:
+            return
+        try:
+            self._dpi_status_after_id = self.window.after(120, self._update_dpi_status)
+        except tk.TclError:
+            pass
+
+    def _update_dpi_status(self):
+        self._dpi_status_after_id = None
+        if not hasattr(self, "dpi_status_text"):
+            return
+        try:
+            dpi, status_text = self._format_dpi_status()
+            self.current_dpi = dpi
+            self.dpi_status_text.set(status_text)
+        except tk.TclError:
+            pass
 
     def _build_window(self):
         style = self.window.style
-        style.configure("Koji.TFrame", background="#e7ecf2")
-        style.configure("Panel.TFrame", background="#f7f9fb")
-        style.configure("Band.TFrame", background="#f6f8fa")
+        style.configure("Koji.TFrame", background=APP_BG)
+        style.configure("Panel.TFrame", background=PANEL_BG)
+        style.configure("Band.TFrame", background=BAND_BG)
         title_font = ("Segoe UI Variable Display", 22, "bold")
-        style.configure("Title.TLabel", background="#e7ecf2", foreground="#0f1f2f", font=title_font)
-        style.configure("Subtitle.TLabel", background="#e7ecf2", foreground="#33485c", font=("Yu Gothic UI", 11))
-        style.configure("IntroSubtitle.TLabel", background="#f7f9fb", foreground="#33485c", font=("Yu Gothic UI", 11))
-        style.configure("Notice.TLabel", background="#ffffff", foreground="#174a6b", font=("Yu Gothic UI", 9, "bold"))
-        style.configure("License.TLabel", background="#ffffff", foreground="#25465f", font=("Yu Gothic UI", 7))
-        style.configure("LicensePanel.TFrame", background="#eef7fb")
-        style.configure("LicenseInner.TFrame", background="#ffffff")
-        style.configure("Path.TLabel", background="#ffffff", foreground="#17212b", borderwidth=1, relief="solid", padding=7)
-        style.configure("Field.TLabel", background="#f6f8fa", foreground="#17212b", font=("Yu Gothic UI", 10))
-        style.configure("Section.TLabel", background="#f6f8fa", foreground="#174a6b", font=("Yu Gothic UI", 11, "bold"))
-        style.configure("FormLabel.TLabel", background="#f7f9fb", foreground="#25465f", font=("Yu Gothic UI", 10, "bold"))
-        style.configure("Run.TButton", font=("Yu Gothic UI", 12, "bold"), padding=(26, 10))
+        style.configure("Title.TLabel", background=APP_BG, foreground=TEXT_COLOR, font=title_font)
+        style.configure("Subtitle.TLabel", background=APP_BG, foreground=MUTED_TEXT_COLOR, font=("Yu Gothic UI", 11))
+        style.configure("IntroSubtitle.TLabel", background=PANEL_BG, foreground=MUTED_TEXT_COLOR, font=("Yu Gothic UI", 11))
+        style.configure("Notice.TLabel", background=PANEL_BG, foreground=SECTION_TEXT_COLOR, font=("Yu Gothic UI", 9, "bold"))
+        style.configure("License.TLabel", background=PANEL_BG, foreground=MUTED_TEXT_COLOR, font=("Yu Gothic UI", 7))
+        style.configure("LicensePanel.TFrame", background=SUBTLE_BG)
+        style.configure("LicenseInner.TFrame", background=PANEL_BG)
+        style.configure("Path.TLabel", background=PANEL_BG, foreground=TEXT_COLOR, borderwidth=1, relief="solid", padding=self._px(7))
+        style.configure("Field.TLabel", background=BAND_BG, foreground=TEXT_COLOR, font=("Yu Gothic UI", 10))
+        style.configure("Section.TLabel", background=BAND_BG, foreground=SECTION_TEXT_COLOR, font=("Yu Gothic UI", 11, "bold"))
+        style.configure("FormLabel.TLabel", background=PANEL_BG, foreground=MUTED_TEXT_COLOR, font=("Yu Gothic UI", 10, "bold"))
+        style.configure("Run.TButton", font=("Yu Gothic UI", 12, "bold"), padding=self._pad(26, 10))
 
-        root = tb.Frame(self.window, style="Koji.TFrame", padding=(14, 8, 14, 8))
-        root.pack(fill="both", expand=True)
+        root = tb.Frame(self.window, style="Koji.TFrame", padding=self._pad(10, 8, 10, 8))
+        root.place(relx=0.5, y=0, anchor="n", width=self._px(CONTENT_MAX_WIDTH))
+        self.root_frame = root
 
-        header = tk.Frame(root, bg="#ffffff", height=42)
+        header = tk.Frame(root, bg=PANEL_BG, height=self._px(38))
         header.pack_propagate(False)
-        header.pack(fill="x", pady=(0, 6))
-        header.columnconfigure(0, minsize=96)
+        header.pack(fill="x", pady=self._pad(0, 6))
+        header.columnconfigure(0, minsize=self._px(96))
         header.columnconfigure(1, weight=1)
-        header.columnconfigure(2, minsize=96)
-        header_left_balance = tk.Frame(header, bg="#ffffff", width=96)
+        header.columnconfigure(2, minsize=self._px(96))
+        header_left_balance = tk.Frame(header, bg=PANEL_BG, width=self._px(96))
         header_left_balance.grid(row=0, column=0, sticky="nsew")
         self.title_label = tk.Label(
             header,
-            bg="#ffffff",
-            fg="#0f1f2f",
+            bg=PANEL_BG,
+            fg=TEXT_COLOR,
             font=title_font,
             anchor="center",
         )
         self.title_label.grid(row=0, column=1, sticky="nsew")
-        flag_holder = tk.Frame(header, bg="#ffffff", width=96)
+        flag_holder = tk.Frame(header, bg=PANEL_BG, width=self._px(96))
         flag_holder.grid(row=0, column=2, sticky="nsew")
-        self.japanese_button = FlagButton(flag_holder, "jp", lambda: self._set_language("ja"), bg="#ffffff")
-        self.english_button = FlagButton(flag_holder, "gb", lambda: self._set_language("en"), bg="#ffffff")
-        self.english_button.pack(side="right", padx=(6, 0))
-        self.japanese_button.pack(side="right", padx=(6, 0))
+        self.japanese_button = FlagButton(flag_holder, "jp", lambda: self._set_language("ja"), bg=PANEL_BG, ui_scale=self.ui_scale)
+        self.english_button = FlagButton(flag_holder, "gb", lambda: self._set_language("en"), bg=PANEL_BG, ui_scale=self.ui_scale)
+        self.english_button.pack(side="right", padx=self._pad(6, 0))
+        self.japanese_button.pack(side="right", padx=self._pad(6, 0))
 
-        intro_panel = tb.Frame(root, style="Panel.TFrame", height=76, padding=(8, 6))
-        intro_panel.pack_propagate(False)
-        intro_panel.pack(fill="x", pady=(0, 6))
+        intro_panel = tb.Frame(root, style="Panel.TFrame", padding=self._pad(8, 4))
+        intro_panel.pack(fill="x", pady=self._pad(0, 4))
 
-        self.subtitle_label = tb.Label(intro_panel, style="IntroSubtitle.TLabel", wraplength=720)
+        self.subtitle_label = tb.Label(intro_panel, style="IntroSubtitle.TLabel", wraplength=self._px(720))
 
-        notice_panel = tk.Frame(intro_panel, bg="#ffffff", height=64)
-        notice_panel.pack_propagate(False)
-        notice_panel.columnconfigure(0, minsize=70)
+        notice_panel = tk.Frame(intro_panel, bg=PANEL_BG)
+        notice_panel.columnconfigure(0, minsize=self._px(70))
         notice_panel.columnconfigure(1, weight=1)
+        notice_panel.rowconfigure(0, weight=1)
         notice_panel.pack(fill="x", expand=True)
-        self.intro_icon_image = make_intro_icon_image()
-        self.intro_icon_label = tk.Label(notice_panel, image=self.intro_icon_image, bg="#ffffff", bd=0)
-        self.intro_icon_label.grid(row=0, column=0, sticky="w", padx=(0, 8))
-        self.notice_label = tb.Label(notice_panel, style="Notice.TLabel", wraplength=630, justify="left")
-        self.notice_label.grid(row=0, column=1, sticky="nsew")
+        self.notice_panel = notice_panel
+        self.intro_icon_image = make_intro_icon_image(self.ui_scale)
 
-        top_panel = tk.Frame(root, bg="#ffffff", padx=10, pady=10)
-        top_panel.pack(fill="x", pady=(0, 6))
+        if self.intro_icon_image is not None:
+            self.intro_icon_label = tk.Label(
+                notice_panel,
+                image=self.intro_icon_image,
+                bg=PANEL_BG,
+                bd=0,
+                width=self._px(64),
+                height=self._px(64),
+            )
+        else:
+            self.intro_icon_label = tk.Label(
+                notice_panel,
+                text="PDF",
+                bg=RUN_BUTTON_FILL,
+                fg=PANEL_BG,
+                bd=0,
+                font=("Segoe UI Variable Display", 16, "bold"),
+                width=4,
+                height=2,
+            )
+        self.intro_icon_label.grid(row=0, column=0, sticky="w", padx=self._pad(0, 8))
+        self.notice_label = tb.Label(notice_panel, style="Notice.TLabel", wraplength=self._px(630), justify="left")
+        self.notice_label.grid(row=0, column=1, sticky="ew")
+        notice_panel.bind("<Configure>", self._sync_notice_wraplength)
+
+        top_panel = tk.Frame(
+            root,
+            bg=PANEL_BG,
+            padx=self._px(10),
+            pady=self._px(8),
+        )
+        top_panel.pack(fill="x", pady=self._pad(0, 4))
         top_panel.columnconfigure(1, weight=1)
+        self.top_panel = top_panel
         self.folder_button = tb.Button(top_panel, bootstyle="secondary-outline", command=self.select_folder)
-        self.folder_button.grid(row=0, column=0, sticky="ew", padx=(0, 10), pady=3)
+        self.folder_button.grid(row=0, column=0, sticky="ew", padx=self._pad(0, 10), pady=self._px(2))
         self.folder_text = tk.StringVar()
-        self.folder_label = tb.Label(top_panel, textvariable=self.folder_text, style="Path.TLabel", wraplength=560)
-        self.folder_label.grid(row=0, column=1, sticky="ew", pady=3)
+        self.folder_label = tb.Label(top_panel, textvariable=self.folder_text, style="Path.TLabel", wraplength=self._px(560))
+        self.folder_label.grid(row=0, column=1, sticky="ew", pady=self._px(2))
         self.file_button = tb.Button(top_panel, bootstyle="secondary-outline", command=self.select_save_file)
-        self.file_button.grid(row=1, column=0, sticky="ew", padx=(0, 10), pady=3)
+        self.file_button.grid(row=1, column=0, sticky="ew", padx=self._pad(0, 10), pady=self._px(2))
         self.file_text = tk.StringVar()
-        self.file_label = tb.Label(top_panel, textvariable=self.file_text, style="Path.TLabel", wraplength=560)
-        self.file_label.grid(row=1, column=1, sticky="ew", pady=3)
+        self.file_label = tb.Label(top_panel, textvariable=self.file_text, style="Path.TLabel", wraplength=self._px(560))
+        self.file_label.grid(row=1, column=1, sticky="ew", pady=self._px(2))
         self.run_button = tk.Label(
             top_panel,
             bd=0,
-            bg="#ffffff",
+            bg=PANEL_BG,
             cursor="hand2",
         )
-        self.run_button.grid(row=0, column=2, rowspan=2, sticky="ns", padx=(12, 0))
+        self.run_button.grid(row=0, column=2, rowspan=2, sticky="ns", padx=self._pad(12, 0))
         self.run_button.bind("<Button-1>", lambda _event: self.finish())
         self.run_button.bind("<Enter>", lambda _event: self._draw_run_button(hover=True))
         self.run_button.bind("<Leave>", lambda _event: self._draw_run_button(hover=False))
 
         self.options_group = tb.Frame(root, style="Koji.TFrame")
         self.options_group.pack(fill="x")
-        self.options_group.columnconfigure(0, weight=5)
-        self.options_group.columnconfigure(1, weight=6)
+        self.options_group.columnconfigure(0, weight=1)
+        self.options_group.columnconfigure(1, weight=0, minsize=self._px(390))
 
         self._build_general_options()
         self._build_bookmark_options()
@@ -283,40 +455,70 @@ class FileSelectorApp:
         self._build_scale_options()
         self._build_asp_options()
 
-        license_notice_panel = tb.Frame(root, style="LicensePanel.TFrame", height=56, padding=(8, 8, 8, 8))
-        license_notice_panel.pack_propagate(False)
+        license_notice_panel = tb.Frame(root, style="LicensePanel.TFrame", padding=self._pad(6, 5, 6, 5))
         license_notice_panel.pack(fill="x")
+        self.license_notice_panel = license_notice_panel
         license_inner_panel = tb.Frame(license_notice_panel, style="LicenseInner.TFrame")
         license_inner_panel.pack(fill="both", expand=True)
+        license_inner_panel.columnconfigure(0, weight=1)
+        license_inner_panel.columnconfigure(1, minsize=self._px(120))
+        license_inner_panel.rowconfigure(0, weight=1)
         self.license_notice_label = tb.Label(
             license_inner_panel,
             style="License.TLabel",
-            wraplength=720,
+            wraplength=self._px(720),
             justify="left",
         )
-        self.license_notice_label.pack(fill="x", expand=True)
+        self.license_notice_label.grid(row=0, column=0, sticky="ew")
+        self.dpi_status_text = tk.StringVar()
+        self.dpi_status_label = tk.Label(
+            license_inner_panel,
+            textvariable=self.dpi_status_text,
+            bg=PANEL_BG,
+            fg=STATUS_TEXT_COLOR,
+            font=("Yu Gothic UI", 8),
+            anchor="se",
+            padx=self._px(8),
+            pady=self._px(2),
+        )
+        self.dpi_status_label.grid(row=0, column=1, sticky="se")
         self._draw_run_button()
 
-    def _band(self, row, title_attr, parent=None, column=0, columnspan=1, padx=(0, 0), pady=(0, 6)):
+    def _band(self, row, title_attr, parent=None, column=0, columnspan=1, padx=(0, 0), pady=(0, 4)):
         parent = parent or self.options_group
-        frame = tb.Frame(parent, style="Band.TFrame", padding=10)
-        frame.grid(row=row, column=column, columnspan=columnspan, sticky="nsew", padx=padx, pady=pady)
+        frame = tb.Frame(
+            parent,
+            style="Band.TFrame",
+            padding=self._pad(8, 7),
+        )
+        frame.grid(
+            row=row,
+            column=column,
+            columnspan=columnspan,
+            sticky="nsew",
+            padx=self._scale_padding(padx),
+            pady=self._scale_padding(pady),
+        )
         frame.columnconfigure(0, weight=1)
         title_label = tb.Label(frame, style="Section.TLabel")
-        title_label.grid(row=0, column=0, sticky="w", columnspan=8, pady=(0, 6))
+        title_label.grid(row=0, column=0, sticky="w", columnspan=8, pady=self._pad(0, 4))
         setattr(self, title_attr, title_label)
         return frame
 
     def _build_general_options(self):
         frame = self._band(0, "general_section_label", column=0, padx=(0, 4))
         frame.columnconfigure(0, weight=1)
-        frame.columnconfigure(1, weight=1)
+        frame.columnconfigure(1, weight=0)
         self.add_page_var = tk.BooleanVar(value=False)
         self.convert_office_var = tk.BooleanVar(value=False)
         self.ppt_slide_bookmarks_var = tk.BooleanVar(value=False)
+        self.confirm_temp_folder_delete_var = tk.BooleanVar(value=False)
         self.resize_pdf_var = tk.BooleanVar(value=False)
+        self.preflight_detail_repair_var = tk.BooleanVar(value=False)
         self.asper_format_var = tk.BooleanVar(value=False)
         self.keep_pdf_extension_var = tk.BooleanVar(value=False)
+        self.save_mode_key = "fast"
+        self.save_mode_var = tk.StringVar()
         self.convert_office_checkbox = tb.Checkbutton(
             frame,
             variable=self.convert_office_var,
@@ -328,15 +530,37 @@ class FileSelectorApp:
             variable=self.ppt_slide_bookmarks_var,
             bootstyle="primary-round-toggle",
         )
+        self.confirm_temp_folder_delete_checkbox = tb.Checkbutton(
+            frame,
+            variable=self.confirm_temp_folder_delete_var,
+            bootstyle="primary-round-toggle",
+        )
         resize_row = tb.Frame(frame, style="Band.TFrame")
         self.resize_pdf_checkbox = tb.Checkbutton(resize_row, variable=self.resize_pdf_var, bootstyle="primary-round-toggle")
-        self.convert_office_checkbox.grid(row=1, column=0, columnspan=2, sticky="w", pady=3)
-        self.ppt_slide_bookmarks_checkbox.grid(row=2, column=0, columnspan=2, sticky="w", padx=(66, 0), pady=3)
-        resize_row.grid(row=3, column=0, columnspan=2, sticky="w", pady=3)
+        self.preflight_detail_repair_checkbox = tb.Checkbutton(
+            frame,
+            variable=self.preflight_detail_repair_var,
+            bootstyle="primary-round-toggle",
+        )
+        self.save_mode_label = tb.Label(frame, style="Field.TLabel")
+        self.save_mode_combo = tb.Combobox(
+            frame,
+            textvariable=self.save_mode_var,
+            values=[],
+            width=8,
+            state="readonly",
+        )
+        self.convert_office_checkbox.grid(row=1, column=0, sticky="w", pady=self._px(3))
+        self.ppt_slide_bookmarks_checkbox.grid(row=2, column=0, sticky="w", padx=self._pad(66, 0), pady=self._px(3))
+        self.confirm_temp_folder_delete_checkbox.grid(row=3, column=0, sticky="w", padx=self._pad(66, 0), pady=self._px(3))
+        resize_row.grid(row=4, column=0, sticky="w", pady=self._px(3))
         self.resize_pdf_checkbox.pack(side="left")
         self.resize_size_var = tk.StringVar(value="A4")
         self.resize_size_combo = tb.Combobox(resize_row, textvariable=self.resize_size_var, values=["A3", "A4", "A5", "B4", "B5"], width=8, state="readonly")
-        self.resize_size_combo.pack(side="left", padx=(12, 0))
+        self.resize_size_combo.pack(side="left", padx=self._pad(12, 0))
+        self.preflight_detail_repair_checkbox.grid(row=1, column=1, sticky="e", pady=self._px(3))
+        self.save_mode_label.grid(row=2, column=1, sticky="e", padx=self._pad(12, 8), pady=self._px(3))
+        self.save_mode_combo.grid(row=3, column=1, sticky="e", pady=self._px(3))
 
     def _build_page_number_options(self):
         frame = self._band(1, "page_number_section_label", column=0, columnspan=2)
@@ -351,7 +575,7 @@ class FileSelectorApp:
             bootstyle="primary-round-toggle",
             command=self.toggle_page_number_options,
         )
-        self.add_pdf_page_numbers_checkbox.grid(row=0, column=1, sticky="w", padx=(12, 0), pady=(0, 8))
+        self.add_pdf_page_numbers_checkbox.grid(row=0, column=1, sticky="w", padx=self._pad(12, 0), pady=self._pad(0, 8))
 
         self.page_start_number_label = tb.Label(frame, style="Field.TLabel")
         self.page_start_number_spinbox = self._make_spinbox(frame, 1, 9999, 1, 1, integer=True)
@@ -369,8 +593,8 @@ class FileSelectorApp:
             (self.page_margin_bottom_label, self.page_margin_bottom_spinbox),
         ]
         for index, (label, widget) in enumerate(labels_widgets):
-            label.grid(row=1, column=index * 2, sticky="e", padx=(0, 6), pady=3)
-            widget.grid(row=1, column=index * 2 + 1, sticky="w", pady=3)
+            label.grid(row=1, column=index * 2, sticky="e", padx=self._pad(0, 6), pady=self._px(3))
+            widget.grid(row=1, column=index * 2 + 1, sticky="w", pady=self._px(3))
 
         self.page_font_label = tb.Label(frame, style="Field.TLabel")
         self.page_font_var = tk.StringVar(value="helv")
@@ -381,16 +605,17 @@ class FileSelectorApp:
         self.page_opacity_label = tb.Label(frame, style="Field.TLabel")
         self.page_opacity_spinbox = self._make_spinbox(frame, 0.05, 1.00, 0.05, 0.20, integer=False)
 
-        self.page_font_label.grid(row=2, column=0, sticky="e", padx=(0, 6), pady=3)
-        self.page_font_combo.grid(row=2, column=1, sticky="w", pady=3)
-        self.page_color_label.grid(row=2, column=2, sticky="e", padx=(0, 6), pady=3)
-        self.page_color_combo.grid(row=2, column=3, sticky="w", pady=3)
-        self.page_opacity_label.grid(row=2, column=4, sticky="e", padx=(0, 6), pady=3)
-        self.page_opacity_spinbox.grid(row=2, column=5, sticky="w", pady=3)
+        self.page_font_label.grid(row=2, column=0, sticky="e", padx=self._pad(0, 6), pady=self._px(3))
+        self.page_font_combo.grid(row=2, column=1, sticky="w", pady=self._px(3))
+        self.page_color_label.grid(row=2, column=2, sticky="e", padx=self._pad(0, 6), pady=self._px(3))
+        self.page_color_combo.grid(row=2, column=3, sticky="w", pady=self._px(3))
+        self.page_opacity_label.grid(row=2, column=4, sticky="e", padx=self._pad(0, 6), pady=self._px(3))
+        self.page_opacity_spinbox.grid(row=2, column=5, sticky="w", pady=self._px(3))
 
     def _build_scale_options(self, parent=None):
         frame = self._band(2, "scale_section_label", parent=parent, column=0, padx=(0, 4))
         self.scale_section_label.grid_configure(columnspan=1)
+        frame.columnconfigure(0, minsize=self._px(158))
         frame.columnconfigure(1, weight=1)
         frame.columnconfigure(3, weight=1)
         self.scale_mode_var = tk.StringVar(value="relative")
@@ -416,21 +641,28 @@ class FileSelectorApp:
         self.scale_y_spinbox = self._make_spinbox(frame, 0.10, 2.00, 0.05, 1.00, integer=False)
         self.base_view_width_spinbox = self._make_spinbox(frame, 100, 1000, 10, 330, integer=True)
         self.base_view_height_spinbox = self._make_spinbox(frame, 100, 1000, 10, 210, integer=True)
-        self.relative_scale_radio.grid(row=0, column=1, sticky="w", padx=(18, 0), pady=(0, 8))
-        self.absolute_scale_radio.grid(row=0, column=2, sticky="w", padx=(12, 0), pady=(0, 8))
-        self.horizontal_scale_label.grid(row=1, column=0, sticky="e", padx=(0, 8), pady=2)
-        self.scale_x_spinbox.grid(row=1, column=1, sticky="w", pady=2)
-        self.vertical_scale_label.grid(row=1, column=2, sticky="e", padx=(12, 8), pady=2)
-        self.scale_y_spinbox.grid(row=1, column=3, sticky="w", pady=2)
-        self.base_view_width_label.grid(row=1, column=0, sticky="e", padx=(0, 8), pady=2)
-        self.base_view_width_spinbox.grid(row=1, column=1, sticky="w", pady=2)
-        self.base_view_height_label.grid(row=1, column=2, sticky="e", padx=(12, 8), pady=2)
-        self.base_view_height_spinbox.grid(row=1, column=3, sticky="w", pady=2)
+        self.relative_scale_radio.grid(row=0, column=1, sticky="w", padx=self._pad(28, 0), pady=self._pad(0, 8))
+        self.absolute_scale_radio.grid(row=0, column=2, sticky="w", padx=self._pad(18, 0), pady=self._pad(0, 8))
+        self.horizontal_scale_label.grid(row=1, column=0, sticky="e", padx=self._pad(0, 8), pady=self._px(2))
+        self.scale_x_spinbox.grid(row=1, column=1, sticky="w", pady=self._px(2))
+        self.vertical_scale_label.grid(row=1, column=2, sticky="e", padx=self._pad(12, 8), pady=self._px(2))
+        self.scale_y_spinbox.grid(row=1, column=3, sticky="w", pady=self._px(2))
+        self.base_view_width_label.grid(row=1, column=0, sticky="e", padx=self._pad(0, 8), pady=self._px(2))
+        self.base_view_width_spinbox.grid(row=1, column=1, sticky="w", pady=self._px(2))
+        self.base_view_height_label.grid(row=1, column=2, sticky="e", padx=self._pad(12, 8), pady=self._px(2))
+        self.base_view_height_spinbox.grid(row=1, column=3, sticky="w", pady=self._px(2))
 
     def _build_bookmark_options(self, parent=None):
         frame = self._band(0, "bookmark_section_label", parent=parent, column=1, padx=(4, 0))
         frame.columnconfigure(0, weight=1)
+        frame.columnconfigure(1, weight=1)
+        self.add_bookmark_page_number_var = tk.BooleanVar(value=False)
         self.add_page_checkbox = tb.Checkbutton(frame, variable=self.add_page_var, bootstyle="primary-round-toggle")
+        self.add_bookmark_page_number_checkbox = tb.Checkbutton(
+            frame,
+            variable=self.add_bookmark_page_number_var,
+            bootstyle="primary-round-toggle",
+        )
         self.keep_pdf_extension_checkbox = tb.Checkbutton(
             frame,
             variable=self.keep_pdf_extension_var,
@@ -443,13 +675,14 @@ class FileSelectorApp:
             bootstyle="primary-round-toggle",
             command=self.toggle_collapse_spinbox,
         )
-        self.add_page_checkbox.grid(row=1, column=0, columnspan=3, sticky="w", pady=3)
-        self.expand_all_checkbox.grid(row=2, column=0, sticky="w", pady=3)
+        self.add_bookmark_page_number_checkbox.grid(row=1, column=0, sticky="w", pady=self._px(3))
+        self.add_page_checkbox.grid(row=1, column=1, columnspan=2, sticky="w", padx=self._pad(12, 0), pady=self._px(3))
+        self.expand_all_checkbox.grid(row=2, column=0, sticky="w", pady=self._px(3))
         self.bookmark_open_level_label = tb.Label(frame, style="Field.TLabel")
-        self.bookmark_open_level_label.grid(row=2, column=1, sticky="e", padx=(16, 8), pady=3)
+        self.bookmark_open_level_label.grid(row=2, column=1, sticky="e", padx=self._pad(16, 8), pady=self._px(3))
         self.collapse_spinbox = self._make_spinbox(frame, 1, 10, 1, 1, integer=True)
-        self.collapse_spinbox.grid(row=2, column=2, sticky="w", pady=3)
-        self.keep_pdf_extension_checkbox.grid(row=3, column=0, columnspan=3, sticky="w", pady=3)
+        self.collapse_spinbox.grid(row=2, column=2, sticky="w", pady=self._px(3))
+        self.keep_pdf_extension_checkbox.grid(row=3, column=0, columnspan=3, sticky="w", pady=self._px(3))
 
     def _build_asp_options(self):
         frame = self._band(2, "asp_section_label", column=1, padx=(4, 0))
@@ -458,7 +691,7 @@ class FileSelectorApp:
             variable=self.asper_format_var,
             bootstyle="primary-round-toggle",
         )
-        self.asper_format_checkbox.grid(row=1, column=0, sticky="w", pady=3)
+        self.asper_format_checkbox.grid(row=1, column=0, sticky="w", pady=self._px(3))
 
     def _make_spinbox(self, master, minimum, maximum, increment, value, integer):
         textvariable = tk.StringVar(value=str(int(value)) if integer else f"{value:.2f}")
@@ -479,12 +712,12 @@ class FileSelectorApp:
         return spinbox
 
     def _draw_run_button(self, hover=False):
-        if not hasattr(self, "run_button"):
+        if not self._widget_exists("run_button"):
             return
         key = "run_hover_image" if hover else "run_image"
-        image = make_run_image(self._text("create_short"), hover)
+        image = make_run_image(self._text("create_short"), hover, self.ui_scale)
         setattr(self, key, image)
-        self.run_button.configure(bg="#ffffff", image=image)
+        self.run_button.configure(bg=PANEL_BG, image=image)
         self.run_button.image = image
 
     def _spinbox_value(self, spinbox):
@@ -505,15 +738,26 @@ class FileSelectorApp:
 
     def _set_language(self, language):
         self.language = language
-        self.japanese_button.set_checked(language == "ja")
-        self.english_button.set_checked(language == "en")
+        if self._widget_exists("japanese_button"):
+            self.japanese_button.set_checked(language == "ja")
+        if self._widget_exists("english_button"):
+            self.english_button.set_checked(language == "en")
         self._apply_language()
+
+    def _widget_exists(self, attr_name):
+        widget = getattr(self, attr_name, None)
+        if widget is None:
+            return False
+        try:
+            return bool(widget.winfo_exists())
+        except tk.TclError:
+            return False
 
     def _text(self, key):
         translations = {
             "en": {
                 "window_title": "kojiPDF - Built with Python by Code4Construct",
-                "title": "kojiPDF v2.0.0",
+                "title": "kojiPDF v2.1.0",
                 "subtitle": "Select a folder and output PDF file, then create a structured inspection PDF.",
                 "notice": (
                     "- Merge PDFs and create bookmarks from file and folder names\n"
@@ -548,11 +792,21 @@ class FileSelectorApp:
                 "completion_title": "Done",
                 "completion_exit_message": "PDF creation is complete.\nExit the program?",
                 "error_title": "Error",
-                "add_page": "Add included page count to bookmark names",
-                "keep_pdf_extension": "Keep .pdf in bookmark names",
+                "add_bookmark_page_number": "Add page number",
+                "add_page": "Add page count",
+                "keep_pdf_extension": "Keep .pdf",
                 "convert_office": "Convert Office files to PDF before merging",
+                "confirm_temp_folder_delete": "Confirm temp folder delete",
                 "ppt_slide_bookmarks": "Add PowerPoint slide bookmarks",
                 "resize_pdf": "Resize all PDFs to selected page size",
+                "save_mode": "Save mode",
+                "preflight_detail_repair": "Pre-check and repair",
+                "save_modes": {
+                    "fast": "Fast",
+                    "standard": "Standard",
+                    "cleanup": "Cleanup",
+                    "compress": "Compress",
+                },
                 "asper_format": "Apply Dennoh ASPer bookmark name rules",
                 "add_pdf_page_numbers": "Add page numbers to merged PDF pages",
                 "page_start_number": "Start number",
@@ -572,18 +826,25 @@ class FileSelectorApp:
                 "bookmark_level": "Open level",
                 "folder_dialog": "Select folder",
                 "file_dialog": "Select output PDF",
-                "default_output": "merged_inspection_documents.pdf",
+                "default_output": "one_pdf_with_bookmarks.pdf",
                 "pdf_filetype": "PDF files",
+                "temp_pdf_notice_title": "Temporary PDF",
+                "temp_pdf_notice_message": "The following temporary PDF file will be created while creating the merged file.\n{pdf_path}",
+                "temp_pdf_and_folder_notice_message": "The following temporary file and folder will be created while creating the merged file.\n{pdf_path}\n{folder_path}",
+                "temp_folder_notice_message": "\nTemporary folder: {path}",
+                "temp_folder_notice_title": "Office Conversion",
+                "temp_folder_path_message": "Please close Word, Excel, and PowerPoint during conversion. These apps may shut down or conversion errors may occur.{folder_path}",
+                "temp_folder_path_line": "The following temporary folder will be created during conversion.\n{path}",
             },
             "ja": {
                 "window_title": "kojiPDF - Built with Python by Code4Construct",
-                "title": "kojiPDF v2.0.0",
+                "title": "kojiPDF v2.1.0",
                 "subtitle": "フォルダとPDF保存先を選択し、工事検査用PDFファイルを作成します。",
                 "notice": (
                     "・選択フォルダ内のPDFを結合し、ファイル名をしおり、フォルダ名を親しおりとして追加した構造化PDFを作成\n"
                     "・Microsoft OfficeファイルのPDF自動変換、透過文字によるページ番号付与、ページサイズ変更などに対応\n"
                     "用途：工事検査資料の整理、情報共有システムの電子データ確認、"
-                    "ペーパーレス会議資料の作成・閲覧\n"
+                    "ペーパーレス会議資料の作成\n"
                     "注意：本アプリは、使用しているPythonモジュールによりAGPL-3.0 Licenseが適用されます。\n"
                     "商用利用は可能ですが、改変・再配布・ネットワーク経由で提供する場合はソースコード公開が必要です。\n"
                     "この義務を遵守しない場合、AGPL-3.0に基づく利用許諾を受けられません。"
@@ -612,11 +873,21 @@ class FileSelectorApp:
                 "completion_title": "完了",
                 "completion_exit_message": "PDFの作成が完了しました。\nプログラムを終了しますか。",
                 "error_title": "エラー",
+                "add_bookmark_page_number": "しおり名にページを追加",
                 "add_page": "しおり名に含まれるページ数を追加",
                 "keep_pdf_extension": "しおり名に.pdfを残す",
                 "convert_office": "Word・Excel・PowerPointをPDFに変換してから結合",
+                "confirm_temp_folder_delete": "暫定フォルダ削除確認",
                 "ppt_slide_bookmarks": "PowerPointのスライドしおりを付ける",
                 "resize_pdf": "すべてのPDFを指定サイズに変更",
+                "save_mode": "保存方式",
+                "preflight_detail_repair": "事前詳細チェック・修復",
+                "save_modes": {
+                    "fast": "高速",
+                    "standard": "標準",
+                    "cleanup": "整理",
+                    "compress": "圧縮",
+                },
                 "asper_format": "電脳ASPer用のしおり名に整える",
                 "add_pdf_page_numbers": "結合PDFの各ページにページ番号を追加",
                 "page_start_number": "開始番号",
@@ -636,8 +907,15 @@ class FileSelectorApp:
                 "bookmark_level": "しおり展開階層",
                 "folder_dialog": "フォルダを選択してください",
                 "file_dialog": "出力PDFを指定してください",
-                "default_output": "結合済み検査資料.pdf",
+                "default_output": "one_pdf_with_bookmarks.pdf",
                 "pdf_filetype": "PDFファイル",
+                "temp_pdf_notice_title": "一時PDF",
+                "temp_pdf_notice_message": "結合ファイルの作成中に次の一時的なPDFファイルが作成されます。\n{pdf_path}",
+                "temp_pdf_and_folder_notice_message": "結合ファイルの作成中に次の一時的なファイルとフォルダが作成されます。\n{pdf_path}\n{folder_path}",
+                "temp_folder_notice_message": "\n暫定フォルダ: {path}",
+                "temp_folder_notice_title": "Office変換の警告",
+                "temp_folder_path_message": "変換中はWord･Excel･PowerPointを閉じてください。それらのアプリのシャットダウンや変換エラーをおこします。{folder_path}",
+                "temp_folder_path_line": "変換中は次の暫定フォルダが作られます。\n{path}",
             },
         }
         return translations[self.language][key]
@@ -651,9 +929,39 @@ class FileSelectorApp:
         summary, license_notice = notice.split(marker, 1)
         return summary.strip(), marker.strip() + license_notice
 
+    def _sync_notice_wraplength(self, event=None):
+        if event is None:
+            available_width = self.notice_label.winfo_width()
+            if available_width <= 1:
+                self._sync_dynamic_wraplengths()
+                return
+        else:
+            available_width = event.width - self._px(78)
+
+        wraplength = max(self._px(300), available_width)
+        self.notice_label.configure(wraplength=wraplength)
+
+    def _sync_dynamic_wraplengths(self, content_width=None):
+        if content_width is None:
+            content_width = self.root_frame.winfo_width()
+            if content_width <= 1:
+                content_width = min(self._px(CONTENT_MAX_WIDTH), self._px(WINDOW_WIDTH))
+
+        root_horizontal_padding = self._px(28)
+        notice_panel_padding_and_icon = self._px(94)
+        license_panel_padding = self._px(180)
+        path_controls_width = self._px(250)
+
+        inner_width = max(self._px(300), content_width - root_horizontal_padding)
+        self.subtitle_label.configure(wraplength=max(self._px(300), inner_width - self._px(16)))
+        self.notice_label.configure(wraplength=max(self._px(300), inner_width - notice_panel_padding_and_icon))
+        self.license_notice_label.configure(wraplength=max(self._px(300), inner_width - license_panel_padding))
+        self.folder_label.configure(wraplength=max(self._px(300), inner_width - path_controls_width))
+        self.file_label.configure(wraplength=max(self._px(300), inner_width - path_controls_width))
+
     def _apply_language(self):
         self.window.title(self._text("window_title"))
-        self.title_label.configure(text=self._text("title"), bg="#ffffff", fg="#0f1f2f")
+        self.title_label.configure(text=self._text("title"), bg=PANEL_BG, fg=TEXT_COLOR)
         self.subtitle_label.configure(text=self._text("subtitle"))
         notice_text, license_notice_text = self._notice_parts()
         notice_font_size = 9
@@ -662,18 +970,38 @@ class FileSelectorApp:
         self.license_notice_label.configure(font=("Yu Gothic UI", license_font_size))
         self.notice_label.configure(text=notice_text)
         self.license_notice_label.configure(text=license_notice_text)
+        self.window.after_idle(self._sync_notice_wraplength)
         self.folder_button.configure(text=self._text("select_folder"))
         self.file_button.configure(text=self._text("output"))
+
+        if not self._widget_exists("general_section_label"):
+            if hasattr(self, "folder_text"):
+                self.folder_text.set(self.selected_folder or self._text("not_selected"))
+            if hasattr(self, "file_text"):
+                self.file_text.set(self.selected_file or self._text("not_selected"))
+            if self._widget_exists("japanese_button"):
+                self.japanese_button.set_checked(self.language == "ja")
+            if self._widget_exists("english_button"):
+                self.english_button.set_checked(self.language == "en")
+            self._refresh_progress_language()
+            self._draw_run_button()
+            return
+
         self.general_section_label.configure(text=self._text("general_options"))
         self.page_number_section_label.configure(text=self._text("page_number_options"))
         self.scale_section_label.configure(text=self._text("scale_options"))
         self.bookmark_section_label.configure(text=self._text("bookmark_options"))
         self.asp_section_label.configure(text=self._text("asp_options"))
+        self.add_bookmark_page_number_checkbox.configure(text=self._text("add_bookmark_page_number"))
         self.add_page_checkbox.configure(text=self._text("add_page"))
         self.keep_pdf_extension_checkbox.configure(text=self._text("keep_pdf_extension"))
         self.convert_office_checkbox.configure(text=self._text("convert_office"))
+        self.confirm_temp_folder_delete_checkbox.configure(text=self._text("confirm_temp_folder_delete"))
         self.ppt_slide_bookmarks_checkbox.configure(text=self._text("ppt_slide_bookmarks"))
         self.resize_pdf_checkbox.configure(text=self._text("resize_pdf"))
+        self.save_mode_label.configure(text=self._text("save_mode"))
+        self._apply_save_mode_labels()
+        self.preflight_detail_repair_checkbox.configure(text=self._text("preflight_detail_repair"))
         self.asper_format_checkbox.configure(text=self._text("asper_format"))
         self.add_pdf_page_numbers_checkbox.configure(text="")
         self.page_start_number_label.configure(text=self._text("page_start_number"))
@@ -697,11 +1025,52 @@ class FileSelectorApp:
         self.english_button.set_checked(self.language == "en")
         self._draw_run_button()
 
+    def _refresh_progress_language(self):
+        if self._widget_exists("progress_title_label"):
+            self.progress_title_label.configure(text=self._text("progress_title"))
+
+        if not hasattr(self, "progress_steps") or not hasattr(self, "progress_step_labels"):
+            return
+
+        current_index = getattr(self, "progress_step_index", 0)
+        self.progress_steps = self._progress_steps()
+        self.progress_step_index = min(current_index, len(self.progress_step_labels) - 1)
+        for index, label in enumerate(self.progress_step_labels):
+            if label.winfo_exists():
+                label.configure(text=f"{index + 1}. {self.progress_steps[index]['label']}")
+        self._set_progress_step(self.progress_step_index)
+
+    def _apply_save_mode_labels(self):
+        mode_labels = self._text("save_modes")
+        self.save_mode_combo.configure(values=list(mode_labels.values()))
+        self.save_mode_var.set(mode_labels.get(self.save_mode_key, mode_labels["fast"]))
+
     def show(self):
+        self._fit_window_to_screen()
         self._center_window()
         self.window.after(0, self._bring_to_front)
         debug_log("Window shown")
         self.window.mainloop()
+
+    def _fit_window_to_screen(self):
+        self.window.update_idletasks()
+        screen_width = self.window.winfo_screenwidth()
+        screen_height = self.window.winfo_screenheight()
+        available_width = max(self._px(MIN_WINDOW_WIDTH), screen_width - self._px(SCREEN_MARGIN_WIDTH))
+        available_height = max(self._px(MIN_WINDOW_HEIGHT), screen_height - self._px(SCREEN_MARGIN_HEIGHT))
+        width = min(self._px(WINDOW_WIDTH), available_width)
+        content_width = min(self._px(CONTENT_MAX_WIDTH), width)
+        self.root_frame.place_configure(width=content_width)
+        self.window.geometry(f"{width}x{self._px(WINDOW_HEIGHT)}")
+        self.window.update_idletasks()
+        self._sync_dynamic_wraplengths(content_width)
+        self.window.update_idletasks()
+        requested_height = self.root_frame.winfo_reqheight() + self._px(WINDOW_HEIGHT_PADDING)
+        max_height = min(self._px(WINDOW_HEIGHT), available_height)
+        height = min(max(self._px(MIN_WINDOW_HEIGHT), requested_height), max_height)
+        self.window.geometry(f"{width}x{height}")
+        self.window.minsize(min(self._px(MIN_WINDOW_WIDTH), width), min(self._px(MIN_WINDOW_HEIGHT), height))
+        self.window.update_idletasks()
 
     def _center_window(self):
         self.window.update_idletasks()
@@ -752,7 +1121,7 @@ class FileSelectorApp:
         self.run_button.unbind("<Leave>")
 
         self.options_group.configure(cursor="watch")
-        self.progress_panel = tb.Frame(self.options_group, style="Band.TFrame", padding=12)
+        self.progress_panel = tb.Frame(self.options_group, style="Band.TFrame", padding=self._px(12))
         self.progress_panel.grid(row=0, column=0, columnspan=2, sticky="nsew")
         self.options_group.rowconfigure(0, weight=1)
         self.options_group.columnconfigure(0, weight=1)
@@ -761,28 +1130,28 @@ class FileSelectorApp:
         self.progress_panel.columnconfigure(0, weight=1)
 
         self.progress_title_label = tb.Label(self.progress_panel, style="Section.TLabel")
-        self.progress_title_label.grid(row=0, column=0, sticky="w", pady=(0, 8))
+        self.progress_title_label.grid(row=0, column=0, sticky="w", pady=self._pad(0, 8))
         self.progress_title_label.configure(text=self._text("progress_title"))
 
         self.progress_bar = tb.Progressbar(self.progress_panel, mode="indeterminate", bootstyle="danger-striped")
-        self.progress_bar.grid(row=1, column=0, sticky="ew", pady=(0, 10))
+        self.progress_bar.grid(row=1, column=0, sticky="ew", pady=self._pad(0, 10))
         self.progress_bar.start(12)
 
         self.progress_current_text = tk.StringVar(value=self._text("progress_started").strip())
         self.progress_current_label = tk.Label(
             self.progress_panel,
             textvariable=self.progress_current_text,
-            bg="#eef7fb",
-            fg="#174a6b",
+            bg=SUBTLE_BG,
+            fg=SECTION_TEXT_COLOR,
             anchor="w",
             font=("Yu Gothic UI", 10, "bold"),
-            padx=8,
-            pady=5,
+            padx=self._px(8),
+            pady=self._px(5),
         )
-        self.progress_current_label.grid(row=2, column=0, sticky="ew", pady=(0, 10))
+        self.progress_current_label.grid(row=2, column=0, sticky="ew", pady=self._pad(0, 10))
 
-        self.progress_step_frame = tk.Frame(self.progress_panel, bg="#f6f8fa")
-        self.progress_step_frame.grid(row=3, column=0, sticky="ew", pady=(0, 10))
+        self.progress_step_frame = tk.Frame(self.progress_panel, bg=BAND_BG)
+        self.progress_step_frame.grid(row=3, column=0, sticky="ew", pady=self._pad(0, 10))
         self.progress_steps = self._progress_steps()
         self.progress_step_labels = []
         for index, step in enumerate(self.progress_steps):
@@ -790,33 +1159,35 @@ class FileSelectorApp:
             label = tk.Label(
                 self.progress_step_frame,
                 text=f"{index + 1}. {step['label']}",
-                bg="#dfe8ef",
-                fg="#25465f",
+                bg="#dbe5ef",
+                fg=MUTED_TEXT_COLOR,
                 anchor="center",
                 font=("Yu Gothic UI", 9),
-                padx=5,
-                pady=5,
+                padx=self._px(5),
+                pady=self._px(5),
             )
-            label.grid(row=0, column=index, sticky="ew", padx=(0, 4 if index < len(self.progress_steps) - 1 else 0))
+            label.grid(row=0, column=index, sticky="ew", padx=self._pad(0, 4 if index < len(self.progress_steps) - 1 else 0))
             self.progress_step_labels.append(label)
         self.progress_step_index = -1
         self._set_progress_step(0)
 
         self.progress_text = scrolledtext.ScrolledText(
             self.progress_panel,
-            height=14,
+            height=10,
             wrap="word",
-            bg="#ffffff",
-            fg="#17212b",
-            insertbackground="#17212b",
+            bg=PANEL_BG,
+            fg=TEXT_COLOR,
+            insertbackground=TEXT_COLOR,
             relief="flat",
             borderwidth=0,
             font=("Yu Gothic UI", 10),
         )
-        self.progress_text.grid(row=4, column=0, sticky="nsew")
+        self.progress_text.grid(row=4, column=0, sticky="nsew", pady=self._pad(0, 6))
         self.progress_text.configure(state="disabled")
         self.append_progress(self._text("progress_started"))
+        self._start_progress_queue_poll()
         self.window.update_idletasks()
+        self._fit_window_to_screen()
 
     def _progress_steps(self):
         return [
@@ -839,7 +1210,7 @@ class FileSelectorApp:
             elif i == self.progress_step_index:
                 label.configure(text=f"▶ {self.progress_steps[i]['label']}", bg="#fff3cd", fg="#6b4b00")
             else:
-                label.configure(text=f"{i + 1}. {self.progress_steps[i]['label']}", bg="#dfe8ef", fg="#25465f")
+                label.configure(text=f"{i + 1}. {self.progress_steps[i]['label']}", bg="#dbe5ef", fg=MUTED_TEXT_COLOR)
 
     def _update_progress_from_message(self, message):
         if not message or not hasattr(self, "progress_steps"):
@@ -865,6 +1236,30 @@ class FileSelectorApp:
             self.window.update()
         except tk.TclError:
             pass
+
+    def queue_progress(self, message):
+        if message:
+            self._progress_queue.put(message)
+
+    def _start_progress_queue_poll(self):
+        if self._progress_poll_after_id is None:
+            self._poll_progress_queue()
+
+    def _poll_progress_queue(self):
+        self._progress_poll_after_id = None
+        try:
+            while True:
+                self.append_progress(self._progress_queue.get_nowait())
+        except queue.Empty:
+            pass
+        except tk.TclError:
+            return
+
+        if hasattr(self, "progress_text"):
+            try:
+                self._progress_poll_after_id = self.window.after(80, self._poll_progress_queue)
+            except tk.TclError:
+                pass
 
     def finish_progress(self, success=True):
         if not hasattr(self, "progress_text"):
@@ -900,6 +1295,101 @@ class FileSelectorApp:
     def show_error_message(self, message):
         try:
             messagebox.showerror(self._text("error_title"), message, parent=self.window)
+        except tk.TclError:
+            pass
+
+    def show_temp_pdf_notice(self, output_file_path, show_temp_folder=False):
+        try:
+            existing_notice = getattr(self, "_temp_pdf_notice", None)
+            if existing_notice is not None and existing_notice.winfo_exists():
+                existing_notice.destroy()
+
+            temp_pdf_path = output_file_path[:-4] + "temp.PDF"
+            notice_message_key = "temp_pdf_notice_message"
+            notice_values = {"pdf_path": temp_pdf_path}
+            if show_temp_folder:
+                temp_folder_path = os.path.join(os.path.dirname(output_file_path), "temp_folder")
+                notice_message_key = "temp_pdf_and_folder_notice_message"
+                notice_values["folder_path"] = temp_folder_path
+
+            notice = tk.Toplevel(self.window)
+            self._temp_pdf_notice = notice
+            notice.title(self._text("temp_pdf_notice_title"))
+            notice.transient(self.window)
+            notice.resizable(False, False)
+            notice.configure(bg=PANEL_BG)
+            notice.attributes("-topmost", True)
+
+            frame = tb.Frame(notice, padding=self._pad(20, 16), bootstyle="light")
+            frame.grid(row=0, column=0, sticky="nsew")
+            label = tb.Label(
+                frame,
+                text=self._text(notice_message_key).format(**notice_values),
+                style="Field.TLabel",
+                justify="left",
+                wraplength=self._px(520),
+            )
+            label.grid(row=0, column=0, sticky="w")
+
+            notice.update_idletasks()
+            width = notice.winfo_width()
+            height = notice.winfo_height()
+            parent_x = self.window.winfo_rootx()
+            parent_y = self.window.winfo_rooty()
+            parent_width = self.window.winfo_width()
+            parent_height = self.window.winfo_height()
+            x = parent_x + max(0, (parent_width - width) // 2)
+            y = parent_y + max(0, (parent_height - height) // 2)
+            notice.geometry(f"+{x}+{y}")
+
+            notice.after(5000, lambda: notice.destroy() if notice.winfo_exists() else None)
+            notice.after(200, lambda: notice.attributes("-topmost", False) if notice.winfo_exists() else None)
+        except tk.TclError:
+            pass
+
+    def show_temp_folder_notice(self, output_file_path=None):
+        try:
+            folder_text = ""
+            if output_file_path:
+                temp_folder_path = os.path.join(os.path.dirname(output_file_path), "temp_folder")
+                folder_text = "\n\n" + self._text("temp_folder_path_line").format(path=temp_folder_path)
+
+            existing_notice = getattr(self, "_temp_folder_notice", None)
+            if existing_notice is not None and existing_notice.winfo_exists():
+                existing_notice.destroy()
+
+            notice = tk.Toplevel(self.window)
+            self._temp_folder_notice = notice
+            notice.title(self._text("temp_folder_notice_title"))
+            notice.transient(self.window)
+            notice.resizable(False, False)
+            notice.configure(bg=PANEL_BG)
+            notice.attributes("-topmost", True)
+
+            frame = tb.Frame(notice, padding=self._pad(20, 16), bootstyle="light")
+            frame.grid(row=0, column=0, sticky="nsew")
+            label = tb.Label(
+                frame,
+                text=self._text("temp_folder_path_message").format(folder_path=folder_text),
+                style="Field.TLabel",
+                justify="left",
+                wraplength=self._px(520),
+            )
+            label.grid(row=0, column=0, sticky="w")
+
+            notice.update_idletasks()
+            width = notice.winfo_width()
+            height = notice.winfo_height()
+            parent_x = self.window.winfo_rootx()
+            parent_y = self.window.winfo_rooty()
+            parent_width = self.window.winfo_width()
+            parent_height = self.window.winfo_height()
+            x = parent_x + max(0, (parent_width - width) // 2)
+            y = parent_y + max(0, (parent_height - height) // 2)
+            notice.geometry(f"+{x}+{y}")
+
+            notice.after(5000, lambda: notice.destroy() if notice.winfo_exists() else None)
+            notice.after(200, lambda: notice.attributes("-topmost", False) if notice.winfo_exists() else None)
         except tk.TclError:
             pass
 
@@ -942,6 +1432,11 @@ class FileSelectorApp:
     def toggle_office_options(self):
         state = "normal" if self.convert_office_var.get() else "disabled"
         self.ppt_slide_bookmarks_checkbox.configure(state=state)
+        self.confirm_temp_folder_delete_checkbox.configure(state=state)
+        if not self.convert_office_var.get():
+            self.confirm_temp_folder_delete_var.set(False)
+        if self.convert_office_var.get():
+            self.show_temp_folder_notice(self.selected_file)
 
     def select_folder(self):
         folder = filedialog.askdirectory(
@@ -965,6 +1460,11 @@ class FileSelectorApp:
         if file_path:
             self.selected_file = file_path
             self.file_text.set(file_path)
+            self.show_temp_pdf_notice(file_path, show_temp_folder=self.convert_office_var.get())
+
+    @property
+    def add_bookmark_page_number(self):
+        return self.add_bookmark_page_number_var.get()
 
     @property
     def add_page(self):
@@ -973,6 +1473,10 @@ class FileSelectorApp:
     @property
     def convert_office(self):
         return self.convert_office_var.get()
+
+    @property
+    def confirm_temp_folder_delete(self):
+        return self.confirm_temp_folder_delete_var.get()
 
     @property
     def ppt_slide_bookmarks(self):
@@ -985,6 +1489,26 @@ class FileSelectorApp:
     @property
     def resize_size(self):
         return self.resize_size_var.get()
+
+    @property
+    def preflight_detail_repair(self):
+        return self.preflight_detail_repair_var.get()
+
+    @property
+    def save_options(self):
+        mode_labels = self._text("save_modes")
+        selected_label = self.save_mode_var.get()
+        self.save_mode_key = next(
+            (key for key, label in mode_labels.items() if label == selected_label),
+            "fast",
+        )
+        mode_options = {
+            "fast": {"garbage": 1, "deflate": False},
+            "standard": {"garbage": 2, "deflate": False},
+            "cleanup": {"garbage": 3, "deflate": False},
+            "compress": {"garbage": 4, "deflate": True},
+        }
+        return mode_options[self.save_mode_key]
 
     @property
     def asper_format(self):
@@ -1056,11 +1580,15 @@ def select_folder_and_file():
     result = (
         selector.selected_folder,
         selector.selected_file,
+        selector.add_bookmark_page_number,
         selector.add_page,
         selector.convert_office,
+        selector.confirm_temp_folder_delete,
         selector.ppt_slide_bookmarks,
         selector.resize_pdf,
         selector.resize_size,
+        selector.preflight_detail_repair,
+        selector.save_options,
         selector.asper_format,
         selector.keep_pdf_extension,
         selector.add_pdf_page_numbers,
@@ -1086,7 +1614,7 @@ class ProgressWriter:
         if self.original is not None:
             self.original.write(message)
         if self.progress_ui is not None:
-            self.progress_ui.append_progress(message)
+            self.progress_ui.queue_progress(message)
 
     def flush(self):
         if self.original is not None:
@@ -1097,11 +1625,15 @@ if __name__ == "__main__":
     (
         folder,
         file_path,
+        add_bookmark_page_number,
         add_page,
         convert_office,
+        confirm_temp_folder_delete,
         ppt_slide_bookmarks,
         resize_pdf,
         resize_size,
+        preflight_detail_repair,
+        save_options,
         asper_format,
         keep_pdf_extension,
         add_pdf_page_numbers,
@@ -1117,11 +1649,15 @@ if __name__ == "__main__":
     ) = select_folder_and_file()
     print(f"Selected folder: {folder}")
     print(f"Output file: {file_path}")
+    print(f"Add bookmark page numbers to bookmark labels: {add_bookmark_page_number}")
     print(f"Add page numbers to bookmark labels: {add_page}")
     print(f"Convert Office files: {convert_office}")
+    print(f"Confirm temp folder delete: {confirm_temp_folder_delete}")
     print(f"Add PowerPoint slide bookmarks: {ppt_slide_bookmarks}")
     print(f"Resize PDF pages: {resize_pdf}")
     print(f"Resize PDF page size: {resize_size}")
+    print(f"Preflight detail repair: {preflight_detail_repair}")
+    print(f"Save options: {save_options}")
     print(f"Apply Cyber ASPer bookmark name rules: {asper_format}")
     print(f"Keep .pdf in bookmark names: {keep_pdf_extension}")
     print(f"Add page numbers to PDF pages: {add_pdf_page_numbers}")
