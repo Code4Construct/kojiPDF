@@ -16,7 +16,7 @@ import m22add_child_toc as m22
 import m44temp_convert as m44
 import m45invalid_pdflist as m45
 # ユーザーにフォルダを選択させる
-folder_path ,output_file_path, add_page ,exist_w_e_file,xratio,yratio,scale_enabled= m05.select_folder_and_file()
+folder_path ,output_file_path, add_page ,exist_w_e_file,xratio,yratio,scale_enabled,expand_all,collapse_level= m05.select_folder_and_file()
 if folder_path is None or output_file_path is None:
     print("キャンセルされたため処理を中断します。")
     sys.exit(1)  # 終了コード1（異常終了）
@@ -73,8 +73,9 @@ output_pdf.close()
 print("一時ファイルを開いています。")
 output_pdf = fitz_open(output_file_path[:-4]+"temp.PDF")
 print("しおりにスタイルを追加し、クリックしたときの位置とサイズの最適化しています。")
-output_pdf=m10.set_newtoc(output_pdf,xratio,yratio)
+output_pdf=m10.set_newtoc(output_pdf,xratio,yratio,99 if expand_all else collapse_level)
 print("最終ファイルを保存しています。")
+output_pdf.xref_set_key(output_pdf.pdf_catalog(), "PageMode", "/UseOutlines")# ページモードをUseOutlinesに変更
 output_pdf.save(output_file_path)
 output_pdf.close()
 print("一時ファイルを削除しています。")

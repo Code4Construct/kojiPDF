@@ -3,7 +3,7 @@ import m07make_toc as m07
 import m08get_Po_Zs as m08
 import m13get_fonts as m13
 #globals()["fitz"] = fitz  # eval() で fitz を使えるようにする
-def set_newtoc(pdf_document,xratio,yratio):
+def set_newtoc(pdf_document,xratio,yratio,Ncollapse):
     """
     PDF ドキュメントの目次 (TOC) にリンク情報を設定し、画面にフィットするように調整された PDF を返します。
 
@@ -18,6 +18,7 @@ def set_newtoc(pdf_document,xratio,yratio):
         pdf_document (fitz.Document): 編集対象の PDF ドキュメント。
         xratio (float): ページ幅に対するズーム倍率。
         yratio (float): ページ高さに対するズーム倍率。
+        Ncollapse (int): TOC の折りたたみ数。
 
     Returns:
         fitz.Document: TOC にリンク情報が設定された PDF ドキュメント。
@@ -28,5 +29,5 @@ def set_newtoc(pdf_document,xratio,yratio):
     Bfonts = m13.get_fonts(pdf_document)
     Po_Zs = m08.get_Po_Zs(pdf_document,xratio,yratio)
     #print(Po_Zs)
-    pdf_document.set_toc(eval(m07.make_newtoc(pdf_document.get_toc(),Po_Zs,Bfonts)))
+    pdf_document.set_toc(eval(m07.make_newtoc(pdf_document.get_toc(),Po_Zs,Bfonts)),collapse=Ncollapse)
     return pdf_document

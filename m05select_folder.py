@@ -15,7 +15,7 @@ def resource_path(relative_path):
 class FileSelectorApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("kojiPDF_v1.4.2 工事検査用PDFファイル作成アプリ")
+        self.root.title("kojiPDF_v1.5.0 工事検査用PDFファイル作成アプリ")
 
         icon_path = resource_path("smallicon.ico")
         try:
@@ -85,6 +85,28 @@ class FileSelectorApp:
             state="disabled"
         )
         self.scale_y_spinbox.pack(side=tk.LEFT, padx=(0, 10))
+
+        # すべてのしおりを展開するかどうかのチェックボックス
+        self.expand_all_var = tk.BooleanVar(value=False)
+        self.expand_all_checkbox = tk.Checkbutton(
+            toggle_frame,
+            text="すべてのしおりを展開する",
+            variable=self.expand_all_var,
+            command=self.toggle_collapse_spinbox
+        )
+        self.expand_all_checkbox.pack(anchor="w")
+
+        # 展開階層スピンボックス（1〜10）
+        collapse_frame = tk.Frame(toggle_frame)
+        collapse_frame.pack(anchor="w", pady=(5, 0))
+        tk.Label(collapse_frame, text="展開階層:").pack(side=tk.LEFT)
+        self.collapse_level_var = tk.IntVar(value=1)
+        self.collapse_spinbox = tk.Spinbox(
+            collapse_frame, from_=1, to=10, textvariable=self.collapse_level_var,
+            width=5, state="normal"
+        )
+        self.collapse_spinbox.pack(side=tk.LEFT)
+
 
         frame2 = tk.Frame(root)
         frame2.pack(padx=10, pady=15, fill=tk.X)
@@ -173,7 +195,9 @@ class FileSelectorApp:
         self.selected_folder = None
         self.selected_file = None
         self.root.destroy()
-
+    def toggle_collapse_spinbox(self):
+        state = "disabled" if self.expand_all_var.get() else "normal"
+        self.collapse_spinbox.config(state=state)
     @property
     def add_page(self):
         return self.add_page_var.get()
@@ -193,12 +217,19 @@ class FileSelectorApp:
     @property
     def scale_enabled(self):
         return self.scale_enable_var.get()
+    @property
+    def expand_all(self):
+        return self.expand_all_var.get()
+
+    @property
+    def collapse_level(self):
+        return self.collapse_level_var.get()
 
 def select_folder_and_file():
     root = tk.Tk()
     app = FileSelectorApp(root)
     root.mainloop()
-    return app.selected_folder, app.selected_file, app.add_page, app.convert_office, app.scale_x, app.scale_y, app.scale_enabled
+    return app.selected_folder, app.selected_file, app.add_page, app.convert_office, app.scale_x, app.scale_y, app.scale_enabled, app.expand_all, app.collapse_level
 
 if __name__ == "__main__":
     folder, file, add_page, convert_office, scale_x, scale_y, scale_enabled = select_folder_and_file()
