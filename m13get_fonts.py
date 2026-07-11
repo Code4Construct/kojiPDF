@@ -1,15 +1,15 @@
 # pdfdocument.py
 import fitz  # PyMuPDF
 
-def get_fonts(pdf_document):
+def get_fonts(pdf_document, apply_asper_colors=False):
     """
     PDFドキュメントからしおり情報を取得し、しおりタイトルとページ番号に対応する
     スタイル（色、太字、斜体）を辞書形式で返す関数。
 
-    スタイルの決定ルールは以下の通り：
+    apply_asper_colors が True の場合のみ、以下の電脳ASPer向け色分けを行います：
     - タイトルが "打_" で始まり、かつ ".pdf" を含む場合：赤色（(0.7, 0, 0)）、標準（太字・斜体なし）
     - タイトルが "打_" で始まらず、かつ ".pdf" を含む場合：青色（(0, 0, 0.7)）、標準（太字・斜体なし）
-    - その他：黒色（(0, 0, 0)）、標準（太字・斜体なし）
+    False の場合、すべて黒色（(0, 0, 0)）、標準（太字・斜体なし）にします。
 
     Parameters:
         pdf_document: PyMuPDF（fitz）などのPDFオブジェクト。get_toc() メソッドを持っている必要がある。
@@ -22,7 +22,11 @@ def get_fonts(pdf_document):
     for bookmark in pdf_document.get_toc():
         level, title, page = bookmark  # しおりのレベル、タイトル、ページ番号
         
-        if title.startswith("打_") and ".pdf" in title:
+        if not apply_asper_colors:
+            color = (0, 0, 0)
+            bold = False
+            italic = False
+        elif title.startswith("打_") and ".pdf" in title:
             color = (0.7, 0, 0)  # 赤
             bold = False
             italic = False

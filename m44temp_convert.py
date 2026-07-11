@@ -4,7 +4,7 @@ from pathlib import Path
 import m06finish_message as m06
 import m43infolder_w_e2pdf as m43
 
-def copy_all_folders_to_temp(folder_path, file_path):
+def copy_all_folders_to_temp(folder_path, file_path, ppt_slide_bookmarks=True):
     #file_path の親フォルダをtemp_folder_pathに指定
     pfile_path = Path(file_path)
     print(f"フォルダのパス: {pfile_path.parent}")
@@ -29,7 +29,7 @@ def copy_all_folders_to_temp(folder_path, file_path):
             shutil.copy2(src_file, dst_file)
 
     # PDF変換処理
-    m43.convert_all_files_to_pdf(temp_folder_path)
+    m43.convert_all_files_to_pdf(temp_folder_path, ppt_slide_bookmarks)
     print("PDF変換処理が完了しました。")
 
     return temp_folder_path

@@ -6,6 +6,7 @@ class FileSelectorApp:
         self.root = root
         self.root.title("工事検査用PDFファイル作成アプリ")
         self.root.geometry("800x200")  # 高さを少し広げてボタンのスペースを確保
+        self.root.after(0, self._center_and_bring_to_front)
 
         # 引数で受け取ったメッセージをラベルに表示
         self.status_label = tk.Label(root, text=message, font=("Arial", 12))
@@ -38,6 +39,18 @@ class FileSelectorApp:
         print("終了ボタンが押されました。プログラムを終了します。")
         self.root.quit()  # メインループを終了
         self.root.destroy()  # ウィンドウを破棄
+
+    def _center_and_bring_to_front(self):
+        self.root.update_idletasks()
+        width = self.root.winfo_width()
+        height = self.root.winfo_height()
+        x = max(0, (self.root.winfo_screenwidth() - width) // 2)
+        y = max(0, (self.root.winfo_screenheight() - height) // 2)
+        self.root.geometry(f"{width}x{height}+{x}+{y}")
+        self.root.lift()
+        self.root.focus_force()
+        self.root.attributes("-topmost", True)
+        self.root.after(200, lambda: self.root.attributes("-topmost", False))
 
 def main(message):
     """親モジュールから引数を渡してウィンドウを表示"""

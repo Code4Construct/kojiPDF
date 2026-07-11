@@ -1,6 +1,6 @@
 import os
 from fitz import Document
-from fitz.fitz import FileDataError, EmptyFileError
+from fitz import FileDataError, EmptyFileError
 
 def find_invalid_pdfs_with_errors(folder_path):
     """

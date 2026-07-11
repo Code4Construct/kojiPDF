@@ -1,7 +1,18 @@
 import fitz  # PyMuPDF
 import m09get_whr as m09
 
-def get_Po_Zs(pdf_document,xra,yra):
+BASE_VIEW_WIDTH_MM = 330
+BASE_VIEW_HEIGHT_MM = 210
+ZOOM_SAFETY_MARGIN = 0.98
+
+
+def get_Po_Zs(
+    pdf_document,
+    xra,
+    yra,
+    base_view_width_mm=BASE_VIEW_WIDTH_MM,
+    base_view_height_mm=BASE_VIEW_HEIGHT_MM,
+):
     """
     PDF ドキュメント内の各ページに対して、ズーム倍率付きの (x, y, z) 座標を取得します。
 
@@ -31,7 +42,10 @@ def get_Po_Zs(pdf_document,xra,yra):
     for page, (width, height, rotation) in whr.items():
         # 条件に基づいて (x, y, z) を決定 
         #z = 210 / height # 奇しくもこれで、大画面では高さが合うようになっている。
-        z = min((330/width)*xra,(210/height)*yra)
+        z = min(
+            (base_view_width_mm / width) * xra,
+            (base_view_height_mm / height) * yra,
+        ) * ZOOM_SAFETY_MARGIN
         # mm を PDF 単位 (pt) に変換 (1 inch = 25.4 mm, 1 inch = 72 pt)
         width_pt = width / 25.4 * 72
         height_pt = height / 25.4 * 72

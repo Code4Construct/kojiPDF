@@ -50,7 +50,18 @@ def convert_excel_to_pdf_with_bookmarks(input_path, output_path):
         del excel
         pythoncom.CoUninitialize()
 
-def convert_pptx_to_pdf(input_path, output_path):
+def remove_pdf_bookmarks(pdf_path):
+    temp_path = pdf_path + ".no_bookmarks.pdf"
+    doc = fitz.open(pdf_path)
+    try:
+        doc.set_toc([])
+        doc.save(temp_path)
+    finally:
+        doc.close()
+    os.replace(temp_path, pdf_path)
+
+
+def convert_pptx_to_pdf(input_path, output_path, ppt_slide_bookmarks=True):
     pythoncom.CoInitialize()
     ppt_app = None
     try:
@@ -59,6 +70,8 @@ def convert_pptx_to_pdf(input_path, output_path):
         presentation = ppt_app.Presentations.Open(os.path.abspath(input_path), WithWindow=False)
         presentation.SaveAs(os.path.abspath(output_path), 32)  # 32 = PDF format
         presentation.Close()
+        if not ppt_slide_bookmarks:
+            remove_pdf_bookmarks(output_path)
     except Exception as e:
         print(f"PowerPoint変換エラー: {e}")
     finally:
@@ -89,7 +102,7 @@ def merge_pdfs_with_bookmarks(temp_files, output_path):
         except:
             pass
 
-def convert_to_pdf(input_path):
+def convert_to_pdf(input_path, ppt_slide_bookmarks=True):
     if not os.path.isfile(input_path):
         print("指定されたファイルが存在しません。")
         return
@@ -104,7 +117,7 @@ def convert_to_pdf(input_path):
         elif ext in ['.xls', '.xlsx']:
             convert_excel_to_pdf_with_bookmarks(input_path, output_path)
         elif ext in ['.ppt', '.pptx']:
-            convert_pptx_to_pdf(input_path, output_path)
+            convert_pptx_to_pdf(input_path, output_path, ppt_slide_bookmarks)
         else:
             print("対応していないファイル形式です。（対応形式: .doc, .docx, .xls, .xlsx, .ppt, .pptx）")
             return

@@ -3,7 +3,15 @@ import m07make_toc as m07
 import m08get_Po_Zs as m08
 import m13get_fonts as m13
 #globals()["fitz"] = fitz  # eval() で fitz を使えるようにする
-def set_newtoc(pdf_document,xratio,yratio,Ncollapse):
+def set_newtoc(
+    pdf_document,
+    xratio,
+    yratio,
+    Ncollapse,
+    base_view_width_mm=330,
+    base_view_height_mm=210,
+    apply_asper_bookmark_colors=False,
+):
     """
     PDF ドキュメントの目次 (TOC) にリンク情報を設定し、画面にフィットするように調整された PDF を返します。
 
@@ -26,8 +34,14 @@ def set_newtoc(pdf_document,xratio,yratio,Ncollapse):
     Note:
         `make_newtoc` の戻り値は文字列であり、`eval()` を用いて辞書に変換されます。
     """
-    Bfonts = m13.get_fonts(pdf_document)
-    Po_Zs = m08.get_Po_Zs(pdf_document,xratio,yratio)
+    Bfonts = m13.get_fonts(pdf_document, apply_asper_colors=apply_asper_bookmark_colors)
+    Po_Zs = m08.get_Po_Zs(
+        pdf_document,
+        xratio,
+        yratio,
+        base_view_width_mm,
+        base_view_height_mm,
+    )
     #print(Po_Zs)
     pdf_document.set_toc(eval(m07.make_newtoc(pdf_document.get_toc(),Po_Zs,Bfonts)),collapse=Ncollapse)
     return pdf_document

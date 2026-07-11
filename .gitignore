@@ -1,0 +1,27 @@
+__pycache__/
+*.py[cod]
+
+# Local logs
+*.log
+
+# Build outputs
+build/
+dist/
+*.build/
+*.dist/
+*.onefile-build/
+installer/output/
+
+# Temporary PDF outputs
+*temp.PDF
+temp_folder/
+
+# Virtual environments
+.venv/
+venv/
+
+# Editor settings
+.vscode/
+
+# Internal documentation
+Windowsアプリ化手順書.md

@@ -3,7 +3,7 @@ import m41each_file_pathlist as m41
 import os
 import time
 
-def convert_all_files_to_pdf(folder_path):
+def convert_all_files_to_pdf(folder_path, ppt_slide_bookmarks=True):
     """
     指定されたフォルダ内のすべてのファイル（下位フォルダ含む）をPDFに変換する。
 
@@ -14,7 +14,7 @@ def convert_all_files_to_pdf(folder_path):
 
     for file_path in file_list:
         print(f"変換対象: {file_path}")
-        m40.convert_to_pdf(file_path)
+        m40.convert_to_pdf(file_path, ppt_slide_bookmarks)
         time.sleep(1)
 
 if __name__ == "__main__":
