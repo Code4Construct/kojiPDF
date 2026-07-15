@@ -761,7 +761,7 @@ class FileSelectorApp:
                 "subtitle": "Select a folder and output PDF file, then create a structured inspection PDF.",
                 "notice": (
                     "- Merge PDFs and create bookmarks from file and folder names\n"
-                    "- Convert Office files, add transparent page numbers, and resize pages\n"
+                    "- Convert Office files, add page numbers with adjustable opacity, and resize pages\n"
                     "Uses: inspection records and paperless meeting materials.\n"
                     "Note: This app uses Python modules licensed under AGPL-3.0.\n"
                     "Commercial use is allowed. If modified, redistributed, or provided over a network, "
@@ -842,7 +842,7 @@ class FileSelectorApp:
                 "subtitle": "フォルダとPDF保存先を選択し、工事検査用PDFファイルを作成します。",
                 "notice": (
                     "・選択フォルダ内のPDFを結合し、ファイル名をしおり、フォルダ名を親しおりとして追加した構造化PDFを作成\n"
-                    "・Microsoft OfficeファイルのPDF自動変換、透過文字によるページ番号付与、ページサイズ変更などに対応\n"
+                    "・Microsoft OfficeファイルのPDF自動変換、不透明度を設定できるページ番号付与、ページサイズ変更などに対応\n"
                     "用途：工事検査資料の整理、情報共有システムの電子データ確認、"
                     "ペーパーレス会議資料の作成\n"
                     "注意：本アプリは、使用しているPythonモジュールによりAGPL-3.0 Licenseが適用されます。\n"
@@ -896,7 +896,7 @@ class FileSelectorApp:
                 "page_margin_bottom": "下余白",
                 "page_font": "フォント",
                 "page_color": "色",
-                "page_opacity": "透明度",
+                "page_opacity": "不透明度",
                 "relative_scale": "相対補正",
                 "absolute_scale": "絶対補正",
                 "horizontal_scale": "表示幅補正",

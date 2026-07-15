@@ -21,7 +21,7 @@ kojiPDF creates a structured PDF by merging PDF files in a selected folder and a
   PowerPoint 変換時に、出力 PDF のスライドしおりを保持できます。
 
 - **ページ番号 / Page numbers**  
-  結合 PDF へページ番号を追加できます。開始番号、文字サイズ、余白、色、透明度を設定できます。
+  結合 PDF へページ番号を追加できます。開始番号、文字サイズ、余白、色、不透明度を設定できます。
 
 - **ページサイズ変更 / Page resizing**  
   PDF ページを A3、A4、A5、B4、B5 などの指定サイズへ変更できます。
