@@ -517,8 +517,7 @@ class FileSelectorApp:
         self.preflight_detail_repair_var = tk.BooleanVar(value=False)
         self.asper_format_var = tk.BooleanVar(value=False)
         self.keep_pdf_extension_var = tk.BooleanVar(value=False)
-        self.save_mode_key = "fast"
-        self.save_mode_var = tk.StringVar()
+        self.fast_save_var = tk.BooleanVar(value=False)
         self.convert_office_checkbox = tb.Checkbutton(
             frame,
             variable=self.convert_office_var,
@@ -542,13 +541,10 @@ class FileSelectorApp:
             variable=self.preflight_detail_repair_var,
             bootstyle="primary-round-toggle",
         )
-        self.save_mode_label = tb.Label(frame, style="Field.TLabel")
-        self.save_mode_combo = tb.Combobox(
+        self.fast_save_checkbox = tb.Checkbutton(
             frame,
-            textvariable=self.save_mode_var,
-            values=[],
-            width=8,
-            state="readonly",
+            variable=self.fast_save_var,
+            bootstyle="primary-round-toggle",
         )
         self.convert_office_checkbox.grid(row=1, column=0, sticky="w", pady=self._px(3))
         self.ppt_slide_bookmarks_checkbox.grid(row=2, column=0, sticky="w", padx=self._pad(66, 0), pady=self._px(3))
@@ -559,8 +555,7 @@ class FileSelectorApp:
         self.resize_size_combo = tb.Combobox(resize_row, textvariable=self.resize_size_var, values=["A3", "A4", "A5", "B4", "B5"], width=8, state="readonly")
         self.resize_size_combo.pack(side="left", padx=self._pad(12, 0))
         self.preflight_detail_repair_checkbox.grid(row=1, column=1, sticky="e", pady=self._px(3))
-        self.save_mode_label.grid(row=2, column=1, sticky="e", padx=self._pad(12, 8), pady=self._px(3))
-        self.save_mode_combo.grid(row=3, column=1, sticky="e", pady=self._px(3))
+        self.fast_save_checkbox.grid(row=2, column=1, sticky="e", padx=self._pad(12, 0), pady=self._px(3))
 
     def _build_page_number_options(self):
         frame = self._band(1, "page_number_section_label", column=0, columnspan=2)
@@ -799,14 +794,8 @@ class FileSelectorApp:
                 "confirm_temp_folder_delete": "Confirm temp folder delete",
                 "ppt_slide_bookmarks": "Add PowerPoint slide bookmarks",
                 "resize_pdf": "Resize all PDFs to selected page size",
-                "save_mode": "Save mode",
+                "fast_save": "Fast (larger file)",
                 "preflight_detail_repair": "Pre-check and repair",
-                "save_modes": {
-                    "fast": "Fast",
-                    "standard": "Standard",
-                    "cleanup": "Cleanup",
-                    "compress": "Compress",
-                },
                 "asper_format": "Apply Dennoh ASPer bookmark name rules",
                 "add_pdf_page_numbers": "Add page numbers to merged PDF pages",
                 "page_start_number": "Start number",
@@ -880,14 +869,8 @@ class FileSelectorApp:
                 "confirm_temp_folder_delete": "暫定フォルダ削除確認",
                 "ppt_slide_bookmarks": "PowerPointのスライドしおりを付ける",
                 "resize_pdf": "すべてのPDFを指定サイズに変更",
-                "save_mode": "保存方式",
+                "fast_save": "高速（※データ量大）",
                 "preflight_detail_repair": "事前詳細チェック・修復",
-                "save_modes": {
-                    "fast": "高速",
-                    "standard": "標準",
-                    "cleanup": "整理",
-                    "compress": "圧縮",
-                },
                 "asper_format": "電脳ASPer用のしおり名に整える",
                 "add_pdf_page_numbers": "結合PDFの各ページにページ番号を追加",
                 "page_start_number": "開始番号",
@@ -999,8 +982,7 @@ class FileSelectorApp:
         self.confirm_temp_folder_delete_checkbox.configure(text=self._text("confirm_temp_folder_delete"))
         self.ppt_slide_bookmarks_checkbox.configure(text=self._text("ppt_slide_bookmarks"))
         self.resize_pdf_checkbox.configure(text=self._text("resize_pdf"))
-        self.save_mode_label.configure(text=self._text("save_mode"))
-        self._apply_save_mode_labels()
+        self.fast_save_checkbox.configure(text=self._text("fast_save"))
         self.preflight_detail_repair_checkbox.configure(text=self._text("preflight_detail_repair"))
         self.asper_format_checkbox.configure(text=self._text("asper_format"))
         self.add_pdf_page_numbers_checkbox.configure(text="")
@@ -1039,11 +1021,6 @@ class FileSelectorApp:
             if label.winfo_exists():
                 label.configure(text=f"{index + 1}. {self.progress_steps[index]['label']}")
         self._set_progress_step(self.progress_step_index)
-
-    def _apply_save_mode_labels(self):
-        mode_labels = self._text("save_modes")
-        self.save_mode_combo.configure(values=list(mode_labels.values()))
-        self.save_mode_var.set(mode_labels.get(self.save_mode_key, mode_labels["fast"]))
 
     def show(self):
         self._fit_window_to_screen()
@@ -1496,19 +1473,9 @@ class FileSelectorApp:
 
     @property
     def save_options(self):
-        mode_labels = self._text("save_modes")
-        selected_label = self.save_mode_var.get()
-        self.save_mode_key = next(
-            (key for key, label in mode_labels.items() if label == selected_label),
-            "fast",
-        )
-        mode_options = {
-            "fast": {"garbage": 1, "deflate": False},
-            "standard": {"garbage": 2, "deflate": False},
-            "cleanup": {"garbage": 3, "deflate": False},
-            "compress": {"garbage": 4, "deflate": True},
-        }
-        return mode_options[self.save_mode_key]
+        if self.fast_save_var.get():
+            return {"garbage": 1, "deflate": False}
+        return {"garbage": 4, "deflate": True}
 
     @property
     def asper_format(self):
