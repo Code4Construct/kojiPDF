@@ -211,7 +211,7 @@ def show_pdf_check_report(title, report, actions=None):
     return selected["action"]
 
 
-def run_fast_preflight_check(source_folder_path):
+def run_fast_preflight_check(source_folder_path, output_file_path, confirm_problems=False):
     title = "高速な結合前チェック結果"
     print("Fast preflight PDF check started.")
     results = pdf_validation.check_folder_pdfs(source_folder_path, detailed=False)
@@ -222,6 +222,44 @@ def run_fast_preflight_check(source_folder_path):
 
     report = pdf_validation.summarize_check_results(results, title)
     print(report)
+    errors = [item for item in problems if item["status"] == "error"]
+    repairable = [item for item in problems if item["status"] == "warning"]
+    if errors:
+        show_pdf_check_report(
+            title,
+            report + "\n\n手動対応が必要なPDFがあります。処理を終了します。",
+        )
+        raise RuntimeError("高速な結合前チェックでエラーが見つかったため処理を終了しました。")
+
+    if repairable:
+        repair_results, error_files_dir = pdf_validation.repair_problem_source_pdfs(
+            repairable,
+            source_folder_path,
+            output_file_path,
+        )
+        repair_report = pdf_validation.summarize_repair_results(
+            repair_results,
+            error_files_dir,
+        )
+        print(repair_report)
+        failed = [item for item in repair_results if item["status"] == "failed"]
+        repaired = [item for item in repair_results if item["status"] == "repaired"]
+        post_report = ""
+        if repaired:
+            post_results = pdf_validation.check_folder_pdfs(source_folder_path, detailed=False)
+            post_report = pdf_validation.summarize_check_results(post_results, "高速修復後の結合前チェック結果")
+            print(post_report)
+        combined_report = report + "\n\n" + repair_report
+        if post_report:
+            combined_report += "\n\n" + post_report
+        if confirm_problems or failed:
+            show_pdf_check_report("高速チェック・修復結果", combined_report)
+        if failed:
+            raise RuntimeError("高速チェックで自動修復できないPDFがありました。手動対応してください。")
+        if repaired:
+            print("Fast preflight PDF warnings were repaired. Continuing.")
+        return
+
     action = show_pdf_check_report(
         title,
         report
@@ -237,7 +275,7 @@ def run_fast_preflight_check(source_folder_path):
     print("Continuing after fast preflight PDF check problems by user choice.")
 
 
-def run_detail_preflight_repair(source_folder_path, output_file_path):
+def run_detail_preflight_repair(source_folder_path, output_file_path, confirm_steps=False):
     title = "事前詳細チェック結果"
     print("Detailed preflight PDF check started.")
     results = pdf_validation.check_folder_pdfs(source_folder_path, detailed=True)
@@ -245,7 +283,8 @@ def run_detail_preflight_repair(source_folder_path, output_file_path):
     print(report)
     problems = pdf_validation.problem_results(results)
     if not problems:
-        show_pdf_check_report(title, report)
+        if confirm_steps:
+            show_pdf_check_report(title, report)
         print("Detailed preflight PDF check passed.")
         return
 
@@ -279,7 +318,8 @@ def run_detail_preflight_repair(source_folder_path, output_file_path):
         combined_report = report + "\n\n" + repair_report
         if post_report:
             combined_report += "\n\n" + post_report
-        show_pdf_check_report("事前詳細チェック・修復結果", combined_report)
+        if confirm_steps or failed:
+            show_pdf_check_report("事前詳細チェック・修復結果", combined_report)
         if failed:
             raise RuntimeError("自動修復できないPDFがありました。手動対応してください。")
         if repaired:
@@ -317,8 +357,9 @@ def save_final_pdf(
         should_retry_clean = False
         if warnings and not confirm_save_warnings:
             print("MuPDF warnings were detected during final save.")
-            print("Preflight detail repair is off, so the normally saved PDF will be used without confirmation.")
+            print("Step confirm is off, so a clean save will be tried automatically.")
             print(warnings)
+            should_retry_clean = True
 
         while warnings and confirm_save_warnings:
             action = choose_save_warning_action(warnings)
@@ -370,6 +411,7 @@ def create_pdf(
     resize_pdf,
     resize_size,
     preflight_detail_repair,
+    preflight_confirm,
     save_options,
     add_pdf_page_numbers,
     page_number_options,
@@ -393,9 +435,18 @@ def create_pdf(
             ppt_slide_bookmarks,
         )
 
-    run_fast_preflight_check(folder_path)
     if preflight_detail_repair:
-        run_detail_preflight_repair(folder_path, output_file_path)
+        run_detail_preflight_repair(
+            folder_path,
+            output_file_path,
+            confirm_steps=preflight_confirm,
+        )
+    else:
+        run_fast_preflight_check(
+            folder_path,
+            output_file_path,
+            confirm_problems=preflight_confirm,
+        )
 
     print("フォルダー構造を解析しています。")
     df, max_levels = tree_data.build_tree_data(folder_path)
@@ -475,7 +526,7 @@ def create_pdf(
             output_file_path,
             save_options,
             source_folder_path=folder_path,
-            confirm_save_warnings=preflight_detail_repair,
+            confirm_save_warnings=preflight_confirm,
         )
         output_pdf.close()
     except SourcePdfRepairedRetry:
@@ -572,6 +623,7 @@ def main():
         resize_pdf,
         resize_size,
         preflight_detail_repair,
+        preflight_confirm,
         save_options,
         asper_format,
         keep_pdf_extension,
@@ -608,6 +660,7 @@ def main():
         resize_pdf,
         resize_size,
         preflight_detail_repair,
+        preflight_confirm,
         save_options,
         add_pdf_page_numbers,
         page_number_options,

@@ -515,6 +515,7 @@ class FileSelectorApp:
         self.confirm_temp_folder_delete_var = tk.BooleanVar(value=False)
         self.resize_pdf_var = tk.BooleanVar(value=False)
         self.preflight_detail_repair_var = tk.BooleanVar(value=False)
+        self.preflight_confirm_var = tk.BooleanVar(value=False)
         self.asper_format_var = tk.BooleanVar(value=False)
         self.keep_pdf_extension_var = tk.BooleanVar(value=False)
         self.fast_save_var = tk.BooleanVar(value=False)
@@ -535,14 +536,21 @@ class FileSelectorApp:
             bootstyle="primary-round-toggle",
         )
         resize_row = tb.Frame(frame, style="Band.TFrame")
+        check_options_frame = tb.Frame(frame, style="Band.TFrame")
         self.resize_pdf_checkbox = tb.Checkbutton(resize_row, variable=self.resize_pdf_var, bootstyle="primary-round-toggle")
+        self.error_check_label = tb.Label(check_options_frame, style="Field.TLabel")
         self.preflight_detail_repair_checkbox = tb.Checkbutton(
-            frame,
+            check_options_frame,
             variable=self.preflight_detail_repair_var,
             bootstyle="primary-round-toggle",
         )
+        self.preflight_confirm_checkbox = tb.Checkbutton(
+            check_options_frame,
+            variable=self.preflight_confirm_var,
+            bootstyle="primary-round-toggle",
+        )
         self.fast_save_checkbox = tb.Checkbutton(
-            frame,
+            check_options_frame,
             variable=self.fast_save_var,
             bootstyle="primary-round-toggle",
         )
@@ -554,8 +562,11 @@ class FileSelectorApp:
         self.resize_size_var = tk.StringVar(value="A4")
         self.resize_size_combo = tb.Combobox(resize_row, textvariable=self.resize_size_var, values=["A3", "A4", "A5", "B4", "B5"], width=8, state="readonly")
         self.resize_size_combo.pack(side="left", padx=self._pad(12, 0))
-        self.preflight_detail_repair_checkbox.grid(row=1, column=1, sticky="e", pady=self._px(3))
-        self.fast_save_checkbox.grid(row=2, column=1, sticky="e", padx=self._pad(12, 0), pady=self._px(3))
+        check_options_frame.grid(row=1, column=1, rowspan=4, sticky="nw", padx=self._pad(18, 0), pady=self._px(1))
+        self.fast_save_checkbox.grid(row=0, column=0, sticky="w", pady=self._px(2))
+        self.error_check_label.grid(row=1, column=0, sticky="w", pady=self._pad(6, 0))
+        self.preflight_detail_repair_checkbox.grid(row=2, column=0, sticky="w", pady=self._px(2))
+        self.preflight_confirm_checkbox.grid(row=3, column=0, sticky="w", pady=self._px(2))
 
     def _build_page_number_options(self):
         frame = self._band(1, "page_number_section_label", column=0, columnspan=2)
@@ -794,8 +805,10 @@ class FileSelectorApp:
                 "confirm_temp_folder_delete": "Confirm temp folder delete",
                 "ppt_slide_bookmarks": "Add PowerPoint slide bookmarks",
                 "resize_pdf": "Resize all PDFs to selected page size",
-                "fast_save": "Fast (larger file)",
-                "preflight_detail_repair": "Pre-check and repair",
+                "fast_save": "Fast",
+                "error_check": "Error check",
+                "preflight_detail_repair": "Detailed check",
+                "preflight_confirm": "Step confirm",
                 "asper_format": "Apply Dennoh ASPer bookmark name rules",
                 "add_pdf_page_numbers": "Add page numbers to merged PDF pages",
                 "page_start_number": "Start number",
@@ -869,8 +882,10 @@ class FileSelectorApp:
                 "confirm_temp_folder_delete": "暫定フォルダ削除確認",
                 "ppt_slide_bookmarks": "PowerPointのスライドしおりを付ける",
                 "resize_pdf": "すべてのPDFを指定サイズに変更",
-                "fast_save": "高速（※データ量大）",
-                "preflight_detail_repair": "事前詳細チェック・修復",
+                "fast_save": "高速",
+                "error_check": "エラーチェック",
+                "preflight_detail_repair": "詳細チェック",
+                "preflight_confirm": "逐次確認",
                 "asper_format": "電脳ASPer用のしおり名に整える",
                 "add_pdf_page_numbers": "結合PDFの各ページにページ番号を追加",
                 "page_start_number": "開始番号",
@@ -983,7 +998,9 @@ class FileSelectorApp:
         self.ppt_slide_bookmarks_checkbox.configure(text=self._text("ppt_slide_bookmarks"))
         self.resize_pdf_checkbox.configure(text=self._text("resize_pdf"))
         self.fast_save_checkbox.configure(text=self._text("fast_save"))
+        self.error_check_label.configure(text=self._text("error_check"))
         self.preflight_detail_repair_checkbox.configure(text=self._text("preflight_detail_repair"))
+        self.preflight_confirm_checkbox.configure(text=self._text("preflight_confirm"))
         self.asper_format_checkbox.configure(text=self._text("asper_format"))
         self.add_pdf_page_numbers_checkbox.configure(text="")
         self.page_start_number_label.configure(text=self._text("page_start_number"))
@@ -1472,6 +1489,10 @@ class FileSelectorApp:
         return self.preflight_detail_repair_var.get()
 
     @property
+    def preflight_confirm(self):
+        return self.preflight_confirm_var.get()
+
+    @property
     def save_options(self):
         if self.fast_save_var.get():
             return {"garbage": 1, "deflate": False}
@@ -1555,6 +1576,7 @@ def select_folder_and_file():
         selector.resize_pdf,
         selector.resize_size,
         selector.preflight_detail_repair,
+        selector.preflight_confirm,
         selector.save_options,
         selector.asper_format,
         selector.keep_pdf_extension,
@@ -1600,6 +1622,7 @@ if __name__ == "__main__":
         resize_pdf,
         resize_size,
         preflight_detail_repair,
+        preflight_confirm,
         save_options,
         asper_format,
         keep_pdf_extension,
@@ -1624,6 +1647,7 @@ if __name__ == "__main__":
     print(f"Resize PDF pages: {resize_pdf}")
     print(f"Resize PDF page size: {resize_size}")
     print(f"Preflight detail repair: {preflight_detail_repair}")
+    print(f"Preflight step confirm: {preflight_confirm}")
     print(f"Save options: {save_options}")
     print(f"Apply Cyber ASPer bookmark name rules: {asper_format}")
     print(f"Keep .pdf in bookmark names: {keep_pdf_extension}")
