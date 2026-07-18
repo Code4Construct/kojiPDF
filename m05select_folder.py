@@ -513,6 +513,8 @@ class FileSelectorApp:
         frame.columnconfigure(1, weight=0)
         self.add_page_var = tk.BooleanVar(value=False)
         self.convert_office_var = tk.BooleanVar(value=False)
+        self.convert_mail_var = tk.BooleanVar(value=False)
+        self.eml_encoding_var = tk.StringVar(value="Auto detect")
         self.ppt_slide_bookmarks_var = tk.BooleanVar(value=False)
         self.confirm_temp_folder_delete_var = tk.BooleanVar(value=False)
         self.resize_pdf_var = tk.BooleanVar(value=False)
@@ -531,6 +533,22 @@ class FileSelectorApp:
             frame,
             variable=self.ppt_slide_bookmarks_var,
             bootstyle="primary-round-toggle",
+        )
+        mail_options_row = tb.Frame(frame, style="Band.TFrame")
+        eml_encoding_row = tb.Frame(frame, style="Band.TFrame")
+        self.convert_mail_checkbox = tb.Checkbutton(
+            mail_options_row,
+            variable=self.convert_mail_var,
+            bootstyle="primary-round-toggle",
+            command=self.toggle_mail_options,
+        )
+        self.eml_encoding_label = tb.Label(eml_encoding_row, style="Field.TLabel")
+        self.eml_encoding_combo = tb.Combobox(
+            eml_encoding_row,
+            textvariable=self.eml_encoding_var,
+            values=self._eml_encoding_display_values(),
+            width=13,
+            state="disabled",
         )
         self.confirm_temp_folder_delete_checkbox = tb.Checkbutton(
             frame,
@@ -557,14 +575,19 @@ class FileSelectorApp:
             bootstyle="primary-round-toggle",
         )
         self.convert_office_checkbox.grid(row=1, column=0, sticky="w", pady=self._px(3))
-        self.ppt_slide_bookmarks_checkbox.grid(row=2, column=0, sticky="w", padx=self._pad(66, 0), pady=self._px(3))
-        self.confirm_temp_folder_delete_checkbox.grid(row=3, column=0, sticky="w", padx=self._pad(66, 0), pady=self._px(3))
-        resize_row.grid(row=4, column=0, sticky="w", pady=self._px(3))
+        mail_options_row.grid(row=2, column=0, sticky="w", padx=self._pad(66, 0), pady=self._px(3))
+        self.convert_mail_checkbox.pack(side="left")
+        eml_encoding_row.grid(row=3, column=0, sticky="w", padx=self._pad(96, 0), pady=self._px(2))
+        self.eml_encoding_label.pack(side="left", padx=self._pad(0, 6))
+        self.eml_encoding_combo.pack(side="left")
+        self.ppt_slide_bookmarks_checkbox.grid(row=4, column=0, sticky="w", padx=self._pad(66, 0), pady=self._px(3))
+        self.confirm_temp_folder_delete_checkbox.grid(row=5, column=0, sticky="w", padx=self._pad(66, 0), pady=self._px(3))
+        resize_row.grid(row=6, column=0, sticky="w", pady=self._px(3))
         self.resize_pdf_checkbox.pack(side="left")
         self.resize_size_var = tk.StringVar(value="A4")
         self.resize_size_combo = tb.Combobox(resize_row, textvariable=self.resize_size_var, values=["A3", "A4", "A5", "B4", "B5"], width=8, state="readonly")
         self.resize_size_combo.pack(side="left", padx=self._pad(12, 0))
-        check_options_frame.grid(row=1, column=1, rowspan=4, sticky="nw", padx=self._pad(18, 0), pady=self._px(1))
+        check_options_frame.grid(row=1, column=1, rowspan=6, sticky="nw", padx=self._pad(18, 0), pady=self._px(1))
         self.fast_save_checkbox.grid(row=0, column=0, sticky="w", pady=self._px(2))
         self.error_check_label.grid(row=1, column=0, sticky="w", pady=self._pad(6, 0))
         self.preflight_detail_repair_checkbox.grid(row=2, column=0, sticky="w", pady=self._px(2))
@@ -683,13 +706,13 @@ class FileSelectorApp:
             command=self.toggle_collapse_spinbox,
         )
         self.add_bookmark_page_number_checkbox.grid(row=1, column=0, sticky="w", pady=self._px(3))
-        self.add_page_checkbox.grid(row=1, column=1, columnspan=2, sticky="w", padx=self._pad(12, 0), pady=self._px(3))
-        self.expand_all_checkbox.grid(row=2, column=0, sticky="w", pady=self._px(3))
+        self.add_page_checkbox.grid(row=2, column=0, columnspan=3, sticky="w", pady=self._px(3))
+        self.expand_all_checkbox.grid(row=3, column=0, sticky="w", pady=self._px(3))
         self.bookmark_open_level_label = tb.Label(frame, style="Field.TLabel")
-        self.bookmark_open_level_label.grid(row=2, column=1, sticky="e", padx=self._pad(16, 8), pady=self._px(3))
+        self.bookmark_open_level_label.grid(row=3, column=1, sticky="e", padx=self._pad(16, 8), pady=self._px(3))
         self.collapse_spinbox = self._make_spinbox(frame, 1, 10, 1, 1, integer=True)
-        self.collapse_spinbox.grid(row=2, column=2, sticky="w", pady=self._px(3))
-        self.keep_pdf_extension_checkbox.grid(row=3, column=0, columnspan=3, sticky="w", pady=self._px(3))
+        self.collapse_spinbox.grid(row=3, column=2, sticky="w", pady=self._px(3))
+        self.keep_pdf_extension_checkbox.grid(row=4, column=0, columnspan=3, sticky="w", pady=self._px(3))
 
     def _build_asp_options(self):
         frame = self._band(2, "asp_section_label", column=1, padx=(4, 0))
@@ -760,6 +783,44 @@ class FileSelectorApp:
         except tk.TclError:
             return False
 
+    EML_ENCODING_CODES = ("auto", "utf-8", "cp932", "iso-2022-jp", "euc-jp", "utf-16")
+
+    def _eml_encoding_labels(self):
+        auto_label = "自動判定" if self.language == "ja" else "Auto detect"
+        return {
+            "auto": auto_label,
+            "utf-8": "UTF-8",
+            "cp932": "Shift-JIS",
+            "iso-2022-jp": "ISO-2022-JP",
+            "euc-jp": "EUC-JP",
+            "utf-16": "UTF-16",
+        }
+
+    def _eml_encoding_display_values(self):
+        labels = self._eml_encoding_labels()
+        return [labels[code] for code in self.EML_ENCODING_CODES]
+
+    def _set_eml_encoding_code(self, code):
+        labels = self._eml_encoding_labels()
+        self.eml_encoding_var.set(labels.get(code, labels["auto"]))
+
+    def _current_eml_encoding_code(self):
+        selected = self.eml_encoding_var.get()
+        labels = self._eml_encoding_labels()
+        for code, label in labels.items():
+            if selected == label:
+                return code
+        legacy_labels = {
+            "Auto detect": "auto",
+            "自動判定": "auto",
+            "UTF-8": "utf-8",
+            "Shift-JIS": "cp932",
+            "ISO-2022-JP": "iso-2022-jp",
+            "EUC-JP": "euc-jp",
+            "UTF-16": "utf-16",
+        }
+        return legacy_labels.get(selected, "auto")
+
     def _text(self, key):
         translations = {
             "en": {
@@ -803,6 +864,8 @@ class FileSelectorApp:
                 "add_page": "Add page count",
                 "keep_pdf_extension": "Keep .pdf",
                 "convert_office": "Convert Office files to PDF before merging",
+                "convert_mail": "Convert .msg/.eml email to PDF",
+                "eml_encoding": "eml encoding",
                 "confirm_temp_folder_delete": "Confirm temp folder delete",
                 "ppt_slide_bookmarks": "Add PowerPoint slide bookmarks",
                 "resize_pdf": "Resize all PDFs to selected page size",
@@ -880,6 +943,8 @@ class FileSelectorApp:
                 "add_page": "しおり名に含まれるページ数を追加",
                 "keep_pdf_extension": "しおり名に.pdfを残す",
                 "convert_office": "Word・Excel・PowerPointをPDFに変換してから結合",
+                "convert_mail": "msg・emlメールをPDF化する",
+                "eml_encoding": "eml文字コード",
                 "confirm_temp_folder_delete": "暫定フォルダ削除確認",
                 "ppt_slide_bookmarks": "PowerPointのスライドしおりを付ける",
                 "resize_pdf": "すべてのPDFを指定サイズに変更",
@@ -995,6 +1060,11 @@ class FileSelectorApp:
         self.add_page_checkbox.configure(text=self._text("add_page"))
         self.keep_pdf_extension_checkbox.configure(text=self._text("keep_pdf_extension"))
         self.convert_office_checkbox.configure(text=self._text("convert_office"))
+        self.convert_mail_checkbox.configure(text=self._text("convert_mail"))
+        current_eml_encoding = self._current_eml_encoding_code()
+        self.eml_encoding_label.configure(text=self._text("eml_encoding"))
+        self.eml_encoding_combo.configure(values=self._eml_encoding_display_values())
+        self._set_eml_encoding_code(current_eml_encoding)
         self.confirm_temp_folder_delete_checkbox.configure(text=self._text("confirm_temp_folder_delete"))
         self.ppt_slide_bookmarks_checkbox.configure(text=self._text("ppt_slide_bookmarks"))
         self.resize_pdf_checkbox.configure(text=self._text("resize_pdf"))
@@ -1426,12 +1496,20 @@ class FileSelectorApp:
 
     def toggle_office_options(self):
         state = "normal" if self.convert_office_var.get() else "disabled"
+        self.convert_mail_checkbox.configure(state=state)
         self.ppt_slide_bookmarks_checkbox.configure(state=state)
         self.confirm_temp_folder_delete_checkbox.configure(state=state)
         if not self.convert_office_var.get():
+            self.convert_mail_var.set(False)
             self.confirm_temp_folder_delete_var.set(False)
         if self.convert_office_var.get():
+            self.convert_mail_var.set(True)
             self.show_temp_folder_notice(self.selected_file)
+        self.toggle_mail_options()
+
+    def toggle_mail_options(self):
+        enabled = self.convert_office_var.get() and self.convert_mail_var.get()
+        self.eml_encoding_combo.configure(state="readonly" if enabled else "disabled")
 
     def select_folder(self):
         folder = filedialog.askdirectory(
@@ -1468,6 +1546,14 @@ class FileSelectorApp:
     @property
     def convert_office(self):
         return self.convert_office_var.get()
+
+    @property
+    def convert_mail(self):
+        return self.convert_mail_var.get()
+
+    @property
+    def eml_encoding(self):
+        return self._current_eml_encoding_code()
 
     @property
     def confirm_temp_folder_delete(self):
@@ -1574,6 +1660,8 @@ def select_folder_and_file():
         selector.convert_office,
         selector.confirm_temp_folder_delete,
         selector.ppt_slide_bookmarks,
+        selector.convert_mail,
+        selector.eml_encoding,
         selector.resize_pdf,
         selector.resize_size,
         selector.preflight_detail_repair,
@@ -1620,6 +1708,8 @@ if __name__ == "__main__":
         convert_office,
         confirm_temp_folder_delete,
         ppt_slide_bookmarks,
+        convert_mail,
+        eml_encoding,
         resize_pdf,
         resize_size,
         preflight_detail_repair,
@@ -1645,6 +1735,8 @@ if __name__ == "__main__":
     print(f"Convert Office files: {convert_office}")
     print(f"Confirm temp folder delete: {confirm_temp_folder_delete}")
     print(f"Add PowerPoint slide bookmarks: {ppt_slide_bookmarks}")
+    print(f"Support msg/eml files: {convert_mail}")
+    print(f"eml encoding: {eml_encoding}")
     print(f"Resize PDF pages: {resize_pdf}")
     print(f"Resize PDF page size: {resize_size}")
     print(f"Preflight detail repair: {preflight_detail_repair}")

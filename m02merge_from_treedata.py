@@ -3,7 +3,7 @@ import os
 from fitz import Document
 
 
-def merge_pdfs_from_df(df):
+def merge_pdfs_from_df(df, issue_report=None):
     """
     Merge PDF files listed in the tree rows into one in-memory PDF document.
     """
@@ -22,9 +22,15 @@ def merge_pdfs_from_df(df):
                 with Document(path) as pdf:
                     output_pdf.insert_pdf(pdf)
             except Exception as e:
-                print(f"⚠ エラー: {path} の読み込みに失敗しました -> {e}")
+                message = f"PDF読み込み失敗: {path} -> {e}"
+                print(f"⚠ エラー: {message}")
+                if issue_report is not None:
+                    issue_report.append({"category": "PDF merge error", "message": message})
         else:
-            print(f"⚠ スキップ: {path}（存在しない・PDFでない・空ファイル）")
+            message = f"PDFスキップ: {path}（存在しない・PDFでない・空ファイル）"
+            print(f"⚠ スキップ: {message}")
+            if issue_report is not None:
+                issue_report.append({"category": "PDF merge warning", "message": message})
 
     return output_pdf
 

@@ -8,6 +8,14 @@ POWERPOINT_EXTENSIONS = {'.ppt', '.pptx', '.pptm'}
 SUPPORTED_OFFICE_EXTENSIONS = WORD_EXTENSIONS | EXCEL_EXTENSIONS | POWERPOINT_EXTENSIONS
 
 
+def office_not_available_message(app_name, input_path, error):
+    return (
+        f"{app_name} is required to convert this Office file to PDF: {input_path}\n"
+        f"Please make sure {app_name} is installed and can be opened normally on this PC.\n"
+        f"Details: {error}"
+    )
+
+
 def convert_word_to_pdf(input_path, output_path):
     import pythoncom
     import win32com.client
@@ -22,7 +30,7 @@ def convert_word_to_pdf(input_path, output_path):
         doc.SaveAs(os.path.abspath(output_path), FileFormat=17)  # 17 = PDF
         doc.Close()
     except Exception as e:
-        print(f"Word変換エラー: {e}")
+        print(office_not_available_message("Microsoft Word", input_path, e))
     finally:
         if word:
             word.Quit()
@@ -59,7 +67,7 @@ def convert_excel_to_pdf_with_bookmarks(input_path, output_path):
         wb.Close(False)
         merge_pdfs_with_bookmarks(temp_files, output_path, add_bookmarks=add_sheet_bookmarks)
     except Exception as e:
-        print(f"Excel変換エラー: {e}")
+        print(office_not_available_message("Microsoft Excel", input_path, e))
     finally:
         if excel:
             excel.Quit()
@@ -92,7 +100,7 @@ def convert_pptx_to_pdf(input_path, output_path, ppt_slide_bookmarks=True):
         if not ppt_slide_bookmarks:
             remove_pdf_bookmarks(output_path)
     except Exception as e:
-        print(f"PowerPoint変換エラー: {e}")
+        print(office_not_available_message("Microsoft PowerPoint", input_path, e))
     finally:
         if ppt_app:
             ppt_app.Quit()

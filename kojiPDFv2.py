@@ -88,6 +88,47 @@ def ensure_safe_temp_folder_delete_path(folder_path):
     return absolute_path
 
 
+def add_issue(issue_report, category, message):
+    if issue_report is not None:
+        issue_report.append(
+            {
+                "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "category": category,
+                "message": str(message),
+            }
+        )
+
+
+def write_issue_report(output_file_path, issue_report):
+    if not issue_report:
+        return None
+
+    output_dir = os.path.dirname(os.path.abspath(output_file_path)) or "."
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    report_path = os.path.join(output_dir, f"kojiPDF_error_report_{timestamp}.txt")
+
+    lines = [
+        "kojiPDF error / warning report",
+        f"Created: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        f"Output PDF: {output_file_path}",
+        "",
+    ]
+    for index, item in enumerate(issue_report, start=1):
+        lines.extend(
+            [
+                f"[{index}] {item.get('category', 'Issue')}",
+                f"Time: {item.get('time', '')}",
+                str(item.get("message", "")),
+                "",
+            ]
+        )
+
+    with open(report_path, "w", encoding="utf-8") as report_file:
+        report_file.write("\n".join(lines))
+    print(f"エラー一覧を保存しました: {report_path}")
+    return report_path
+
+
 def save_pdf_collecting_mupdf_warnings(pdf_document, output_file_path, save_options):
     TOOLS.reset_mupdf_warnings()
     TOOLS.mupdf_display_errors(False)
@@ -211,7 +252,7 @@ def show_pdf_check_report(title, report, actions=None):
     return selected["action"]
 
 
-def run_fast_preflight_check(source_folder_path, output_file_path, confirm_problems=False):
+def run_fast_preflight_check(source_folder_path, output_file_path, confirm_problems=False, issue_report=None):
     title = "高速な結合前チェック結果"
     print("Fast preflight PDF check started.")
     results = pdf_validation.check_folder_pdfs(source_folder_path, detailed=False)
@@ -221,6 +262,7 @@ def run_fast_preflight_check(source_folder_path, output_file_path, confirm_probl
         return
 
     report = pdf_validation.summarize_check_results(results, title)
+    add_issue(issue_report, "PDF preflight check", report)
     print(report)
     errors = [item for item in problems if item["status"] == "error"]
     repairable = [item for item in problems if item["status"] == "warning"]
@@ -275,7 +317,7 @@ def run_fast_preflight_check(source_folder_path, output_file_path, confirm_probl
     print("Continuing after fast preflight PDF check problems by user choice.")
 
 
-def run_detail_preflight_repair(source_folder_path, output_file_path, confirm_steps=False):
+def run_detail_preflight_repair(source_folder_path, output_file_path, confirm_steps=False, issue_report=None):
     title = "事前詳細チェック結果"
     print("Detailed preflight PDF check started.")
     results = pdf_validation.check_folder_pdfs(source_folder_path, detailed=True)
@@ -288,6 +330,7 @@ def run_detail_preflight_repair(source_folder_path, output_file_path, confirm_st
         print("Detailed preflight PDF check passed.")
         return
 
+    add_issue(issue_report, "PDF detailed preflight check", report)
     manual_required = [item for item in problems if item["status"] == "error"]
     repairable = [item for item in problems if item["status"] == "warning"]
 
@@ -335,6 +378,7 @@ def save_final_pdf(
     save_options,
     source_folder_path=None,
     confirm_save_warnings=False,
+    issue_report=None,
 ):
     output_dir = os.path.dirname(os.path.abspath(output_file_path)) or "."
     candidate_path = None
@@ -356,12 +400,14 @@ def save_final_pdf(
 
         should_retry_clean = False
         if warnings and not confirm_save_warnings:
+            add_issue(issue_report, "MuPDF save warning", warnings)
             print("MuPDF warnings were detected during final save.")
             print("Step confirm is off, so a clean save will be tried automatically.")
             print(warnings)
             should_retry_clean = True
 
         while warnings and confirm_save_warnings:
+            add_issue(issue_report, "MuPDF save warning", warnings)
             action = choose_save_warning_action(warnings)
             if action == "abort":
                 raise RuntimeError("PDF保存時の警告により処理を終了しました。")
@@ -391,6 +437,7 @@ def save_final_pdf(
                 clean_save_options,
             )
             if clean_warnings:
+                add_issue(issue_report, "MuPDF clean-save warning", clean_warnings)
                 print("MuPDF warnings remained after clean save.")
 
         os.replace(candidate_path, output_file_path)
@@ -408,6 +455,8 @@ def create_pdf(
     exist_w_e_file,
     confirm_temp_folder_delete,
     ppt_slide_bookmarks,
+    convert_mail,
+    eml_encoding,
     resize_pdf,
     resize_size,
     preflight_detail_repair,
@@ -423,6 +472,7 @@ def create_pdf(
     collapse_level,
     asper_format,
     keep_pdf_extension,
+    issue_report=None,
 ):
     print(f"選択されたフォルダ: {folder_path}")
     ensure_output_file_writable(output_file_path)
@@ -433,6 +483,9 @@ def create_pdf(
             folder_path,
             output_file_path,
             ppt_slide_bookmarks,
+            convert_mail,
+            eml_encoding=eml_encoding,
+            issue_report=issue_report,
         )
 
     if preflight_detail_repair:
@@ -440,12 +493,14 @@ def create_pdf(
             folder_path,
             output_file_path,
             confirm_steps=preflight_confirm,
+            issue_report=issue_report,
         )
     else:
         run_fast_preflight_check(
             folder_path,
             output_file_path,
             confirm_problems=preflight_confirm,
+            issue_report=issue_report,
         )
 
     print("フォルダー構造を解析しています。")
@@ -459,7 +514,7 @@ def create_pdf(
     df = tree_data_cleanup.prepare_treedata_for_merge(df)
 
     print("PDFファイルを結合しています。")
-    output_pdf = pdf_merge.merge_pdfs_from_df(df)
+    output_pdf = pdf_merge.merge_pdfs_from_df(df, issue_report=issue_report)
 
     if resize_pdf:
         print(f"PDFページを{resize_size}サイズに変更しています。")
@@ -527,6 +582,7 @@ def create_pdf(
             save_options,
             source_folder_path=folder_path,
             confirm_save_warnings=preflight_confirm,
+            issue_report=issue_report,
         )
         output_pdf.close()
     except SourcePdfRepairedRetry:
@@ -556,6 +612,8 @@ def run_create_pdf_in_worker(progress_ui, create_pdf_args):
     def worker():
         original_stdout = sys.stdout
         sys.stdout = gui.ProgressWriter(progress_ui, original_stdout)
+        issue_report = create_pdf_args[-1] if create_pdf_args else None
+        output_file_path = create_pdf_args[1] if len(create_pdf_args) > 1 else None
         try:
             current_create_pdf_args = list(create_pdf_args)
             retry_count = 0
@@ -589,9 +647,15 @@ def run_create_pdf_in_worker(progress_ui, create_pdf_args):
             result["success"] = True
         except Exception as exc:
             result["error"] = exc
+            add_issue(issue_report, "Processing error", "".join(traceback.format_exception_only(type(exc), exc)).strip())
             print("処理中にエラーが発生しました。")
             traceback.print_exc()
         finally:
+            if output_file_path:
+                try:
+                    write_issue_report(output_file_path, issue_report)
+                except Exception as report_exc:
+                    print(f"エラー一覧の保存に失敗しました: {report_exc}")
             sys.stdout = original_stdout
 
     worker_thread = threading.Thread(target=worker, daemon=True)
@@ -620,6 +684,8 @@ def main():
         exist_w_e_file,
         confirm_temp_folder_delete,
         ppt_slide_bookmarks,
+        convert_mail,
+        eml_encoding,
         resize_pdf,
         resize_size,
         preflight_detail_repair,
@@ -657,6 +723,8 @@ def main():
         exist_w_e_file,
         confirm_temp_folder_delete,
         ppt_slide_bookmarks,
+        convert_mail,
+        eml_encoding,
         resize_pdf,
         resize_size,
         preflight_detail_repair,
@@ -672,6 +740,7 @@ def main():
         collapse_level,
         asper_format,
         keep_pdf_extension,
+        [],
     )
 
     while True:
