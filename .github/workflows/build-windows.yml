@@ -46,13 +46,13 @@ permissions:
   contents: write
 
 env:
-  APP_VERSION: "2.1.0"
-  SETUP_BASENAME: "kojiPDF_Setup_2.1.0"
-  PORTABLE_BASENAME: "kojiPDF_Portable_2.1.0"
-  DIST_ARTIFACT: "kojiPDF_2.1.0_nuitka_dist"
-  PORTABLE_ARTIFACT: "kojiPDF_Portable_2.1.0_zip"
-  MSI_ARTIFACT: "kojiPDF_Setup_2.1.0_msi"
-  EXE_ARTIFACT: "kojiPDF_Setup_2.1.0_exe"
+  APP_VERSION: "2.2.0"
+  SETUP_BASENAME: "kojiPDF_Setup_2.2.0"
+  PORTABLE_BASENAME: "kojiPDF_Portable_2.2.0"
+  DIST_ARTIFACT: "kojiPDF_2.2.0_nuitka_dist"
+  PORTABLE_ARTIFACT: "kojiPDF_Portable_2.2.0_zip"
+  MSI_ARTIFACT: "kojiPDF_Setup_2.2.0_msi"
+  EXE_ARTIFACT: "kojiPDF_Setup_2.2.0_exe"
 
 jobs:
   build-installer:
