@@ -620,7 +620,13 @@ def expand_mail_files_in_folder(
     results = []
     try:
         for mail_file in files:
-            result = export_mail_file(mail_file, destination_folder, outlook=outreach, eml_encoding=eml_encoding)
+            try:
+                relative_parent = mail_file.parent.relative_to(source_folder)
+            except ValueError:
+                relative_parent = Path()
+            mail_destination = destination_folder / relative_parent
+            mail_destination.mkdir(parents=True, exist_ok=True)
+            result = export_mail_file(mail_file, mail_destination, outlook=outreach, eml_encoding=eml_encoding)
             results.append(result)
     finally:
         if outreach is not None:
