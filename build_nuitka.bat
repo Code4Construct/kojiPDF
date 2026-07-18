@@ -26,8 +26,8 @@ python -m nuitka ^
   --windows-icon-from-ico=assets\icons\smallicon_v2.ico ^
   --windows-company-name="Code4Construct" ^
   --windows-product-name="kojiPDF" ^
-  --windows-file-version=2.1.0.0 ^
-  --windows-product-version=2.1.0.0 ^
+  --windows-file-version=2.2.0.0 ^
+  --windows-product-version=2.2.0.0 ^
   --windows-file-description=kojiPDF_PDF_tool ^
   --include-data-files=assets\icons\smallicon_v2.ico=assets\icons\smallicon_v2.ico ^
   --include-data-files=assets\icons\smallicon_v2.png=assets\icons\smallicon_v2.png ^

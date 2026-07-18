@@ -1,4 +1,4 @@
-# kojiPDF v2.1.0 - 日本語 / English
+# kojiPDF v2.2.0 - 日本語 / English
 
 ## 概要 / Overview
 
@@ -38,16 +38,16 @@ kojiPDF creates a structured PDF by merging PDF files in a selected folder and a
 - **日本語 / 英語 GUI / Japanese and English UI**  
   GUI 表示を日本語と英語で切り替えできます。
 
-## v2.1.0 の主な変更 / Main Changes in v2.1.0
+## v2.2.0 の主な変更 / Main Changes in v2.2.0
 
-- README を v2.1.0 向けに整理し、日本語と英語の説明を読みやすく更新しました。  
-  Updated the README for v2.1.0 with clearer Japanese and English descriptions.
+- README を v2.2.0 向けに整理し、日本語と英語の説明を読みやすく更新しました。  
+  Updated the README for v2.2.0 with clearer Japanese and English descriptions.
 
-- GUI 上のアプリ名表示を `kojiPDF v2.1.0` に更新しました。  
-  Updated the GUI title display to `kojiPDF v2.1.0`.
+- GUI 上のアプリ名表示を `kojiPDF v2.2.0` に更新しました。  
+  Updated the GUI title display to `kojiPDF v2.2.0`.
 
-- 配布手順書、署名ポリシー、リリース用ファイル名の例を v2.1.0 向けに更新しました。  
-  Updated distribution notes, signing policy references, and release artifact examples for v2.1.0.
+- 配布手順書、署名ポリシー、リリース用ファイル名の例を v2.2.0 向けに更新しました。  
+  Updated distribution notes, signing policy references, and release artifact examples for v2.2.0.
 
 ## 動作環境 / Requirements
 

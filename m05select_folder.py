@@ -500,8 +500,10 @@ class FileSelectorApp:
             pady=self._scale_padding(pady),
         )
         frame.columnconfigure(0, weight=1)
-        title_label = tb.Label(frame, style="Section.TLabel")
-        title_label.grid(row=0, column=0, sticky="w", columnspan=8, pady=self._pad(0, 4))
+        title_row = tb.Frame(frame, style="Band.TFrame")
+        title_row.grid(row=0, column=0, sticky="w", columnspan=8, pady=self._pad(0, 4))
+        title_label = tb.Label(title_row, style="Section.TLabel")
+        title_label.pack(side="left")
         setattr(self, title_attr, title_label)
         return frame
 
@@ -570,57 +572,56 @@ class FileSelectorApp:
 
     def _build_page_number_options(self):
         frame = self._band(1, "page_number_section_label", column=0, columnspan=2)
-        self.page_number_section_label.grid_configure(columnspan=1)
-        for col in range(8):
-            frame.columnconfigure(col, weight=1 if col in (1, 3, 5, 7) else 0)
+        frame.columnconfigure(0, weight=1)
 
         self.add_pdf_page_numbers_var = tk.BooleanVar(value=False)
         self.add_pdf_page_numbers_checkbox = tb.Checkbutton(
-            frame,
+            self.page_number_section_label.master,
             variable=self.add_pdf_page_numbers_var,
             bootstyle="primary-round-toggle",
             command=self.toggle_page_number_options,
         )
-        self.add_pdf_page_numbers_checkbox.grid(row=0, column=1, sticky="w", padx=self._pad(12, 0), pady=self._pad(0, 8))
+        self.add_pdf_page_numbers_checkbox.pack(side="left", padx=self._pad(12, 0))
 
-        self.page_start_number_label = tb.Label(frame, style="Field.TLabel")
-        self.page_start_number_spinbox = self._make_spinbox(frame, 1, 9999, 1, 1, integer=True)
-        self.page_font_size_label = tb.Label(frame, style="Field.TLabel")
-        self.page_font_size_spinbox = self._make_spinbox(frame, 1, 300, 1, 100, integer=True)
-        self.page_margin_right_label = tb.Label(frame, style="Field.TLabel")
-        self.page_margin_right_spinbox = self._make_spinbox(frame, 0, 1000, 1, 30, integer=True)
-        self.page_margin_bottom_label = tb.Label(frame, style="Field.TLabel")
-        self.page_margin_bottom_spinbox = self._make_spinbox(frame, 0, 1000, 1, 25, integer=True)
+        page_fields_frame = tb.Frame(frame, style="Band.TFrame")
+        page_fields_frame.grid(row=1, column=0, columnspan=8, sticky="ew", pady=self._px(1))
+        for col in range(4):
+            page_fields_frame.columnconfigure(col, weight=1, uniform="page_number_fields")
 
-        labels_widgets = [
-            (self.page_start_number_label, self.page_start_number_spinbox),
-            (self.page_font_size_label, self.page_font_size_spinbox),
-            (self.page_margin_right_label, self.page_margin_right_spinbox),
-            (self.page_margin_bottom_label, self.page_margin_bottom_spinbox),
-        ]
-        for index, (label, widget) in enumerate(labels_widgets):
-            label.grid(row=1, column=index * 2, sticky="e", padx=self._pad(0, 6), pady=self._px(3))
-            widget.grid(row=1, column=index * 2 + 1, sticky="w", pady=self._px(3))
+        def make_page_field(row, column):
+            field_frame = tb.Frame(page_fields_frame, style="Band.TFrame")
+            field_frame.grid(row=row, column=column, sticky="", padx=self._pad(4, 4), pady=self._px(3))
+            label = tb.Label(field_frame, style="Field.TLabel", width=13, anchor="e")
+            label.pack(side="left", padx=self._pad(0, 6))
+            return field_frame, label
 
-        self.page_font_label = tb.Label(frame, style="Field.TLabel")
+        start_field, self.page_start_number_label = make_page_field(0, 0)
+        self.page_start_number_spinbox = self._make_spinbox(start_field, 1, 9999, 1, 1, integer=True)
+        self.page_start_number_spinbox.pack(side="left")
+        font_size_field, self.page_font_size_label = make_page_field(0, 1)
+        self.page_font_size_spinbox = self._make_spinbox(font_size_field, 1, 300, 1, 100, integer=True)
+        self.page_font_size_spinbox.pack(side="left")
+        margin_right_field, self.page_margin_right_label = make_page_field(0, 2)
+        self.page_margin_right_spinbox = self._make_spinbox(margin_right_field, 0, 1000, 1, 30, integer=True)
+        self.page_margin_right_spinbox.pack(side="left")
+        margin_bottom_field, self.page_margin_bottom_label = make_page_field(0, 3)
+        self.page_margin_bottom_spinbox = self._make_spinbox(margin_bottom_field, 0, 1000, 1, 25, integer=True)
+        self.page_margin_bottom_spinbox.pack(side="left")
+
+        font_field, self.page_font_label = make_page_field(1, 0)
         self.page_font_var = tk.StringVar(value="helv")
-        self.page_font_combo = tb.Combobox(frame, textvariable=self.page_font_var, values=["helv", "cour", "tiro"], width=8, state="readonly")
-        self.page_color_label = tb.Label(frame, style="Field.TLabel")
+        self.page_font_combo = tb.Combobox(font_field, textvariable=self.page_font_var, values=["helv", "cour", "tiro"], width=10, state="readonly")
+        self.page_font_combo.pack(side="left")
+        color_field, self.page_color_label = make_page_field(1, 1)
         self.page_color_var = tk.StringVar(value="Red")
-        self.page_color_combo = tb.Combobox(frame, textvariable=self.page_color_var, values=list(self.color_choices), width=8, state="readonly")
-        self.page_opacity_label = tb.Label(frame, style="Field.TLabel")
-        self.page_opacity_spinbox = self._make_spinbox(frame, 0.05, 1.00, 0.05, 0.20, integer=False)
-
-        self.page_font_label.grid(row=2, column=0, sticky="e", padx=self._pad(0, 6), pady=self._px(3))
-        self.page_font_combo.grid(row=2, column=1, sticky="w", pady=self._px(3))
-        self.page_color_label.grid(row=2, column=2, sticky="e", padx=self._pad(0, 6), pady=self._px(3))
-        self.page_color_combo.grid(row=2, column=3, sticky="w", pady=self._px(3))
-        self.page_opacity_label.grid(row=2, column=4, sticky="e", padx=self._pad(0, 6), pady=self._px(3))
-        self.page_opacity_spinbox.grid(row=2, column=5, sticky="w", pady=self._px(3))
+        self.page_color_combo = tb.Combobox(color_field, textvariable=self.page_color_var, values=list(self.color_choices), width=10, state="readonly")
+        self.page_color_combo.pack(side="left")
+        opacity_field, self.page_opacity_label = make_page_field(1, 2)
+        self.page_opacity_spinbox = self._make_spinbox(opacity_field, 0.05, 1.00, 0.05, 0.20, integer=False)
+        self.page_opacity_spinbox.pack(side="left")
 
     def _build_scale_options(self, parent=None):
         frame = self._band(2, "scale_section_label", parent=parent, column=0, padx=(0, 4))
-        self.scale_section_label.grid_configure(columnspan=1)
         frame.columnconfigure(0, minsize=self._px(158))
         frame.columnconfigure(1, weight=1)
         frame.columnconfigure(3, weight=1)
@@ -763,7 +764,7 @@ class FileSelectorApp:
         translations = {
             "en": {
                 "window_title": "kojiPDF - Built with Python by Code4Construct",
-                "title": "kojiPDF v2.1.0",
+                "title": "kojiPDF v2.2.0",
                 "subtitle": "Select a folder and output PDF file, then create a structured inspection PDF.",
                 "notice": (
                     "- Merge PDFs and create bookmarks from file and folder names\n"
@@ -780,7 +781,7 @@ class FileSelectorApp:
                 "create_short": "Run",
                 "not_selected": "Not selected",
                 "general_options": "Merge options",
-                "page_number_options": "Page numbers",
+                "page_number_options": "Print page numbers at bottom right",
                 "scale_options": "Bookmark view adjust",
                 "bookmark_options": "Bookmark display",
                 "asp_options": "Construction info-sharing (ASP)",
@@ -840,7 +841,7 @@ class FileSelectorApp:
             },
             "ja": {
                 "window_title": "kojiPDF - Built with Python by Code4Construct",
-                "title": "kojiPDF v2.1.0",
+                "title": "kojiPDF v2.2.0",
                 "subtitle": "フォルダとPDF保存先を選択し、工事検査用PDFファイルを作成します。",
                 "notice": (
                     "・選択フォルダ内のPDFを結合し、ファイル名をしおり、フォルダ名を親しおりとして追加した構造化PDFを作成\n"
@@ -857,7 +858,7 @@ class FileSelectorApp:
                 "create_short": "作成",
                 "not_selected": "未選択",
                 "general_options": "結合設定",
-                "page_number_options": "ページ番号",
+                "page_number_options": "右下へページ番号を印字",
                 "scale_options": "しおり表示位置補正",
                 "bookmark_options": "しおり表示",
                 "asp_options": "工事情報共有システム（ASP）",
