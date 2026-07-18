@@ -5,6 +5,9 @@ from datetime import datetime
 import m06finish_message as m06
 import m43infolder_w_e2pdf as m43
 import m48mail_to_pdf as mail_exporter
+import m49image_to_pdf as image_converter
+import m50text_to_pdf as text_converter
+import m51zip_extract as zip_extractor
 
 def copy_all_folders_to_temp(
     folder_path,
@@ -68,7 +71,12 @@ def copy_all_folders_to_temp(
                     )
 
     # PDF変換処理
+    if convert_mail:
+        zip_extractor.extract_all_zips_in_folder(temp_folder_path, issue_report=issue_report)
+
     m43.convert_all_files_to_pdf(temp_folder_path, ppt_slide_bookmarks, issue_report=issue_report)
+    image_converter.convert_all_images_to_pdf(temp_folder_path, issue_report=issue_report)
+    text_converter.convert_all_texts_to_pdf(temp_folder_path, issue_report=issue_report)
     print("PDF変換処理が完了しました。")
 
     return temp_folder_path

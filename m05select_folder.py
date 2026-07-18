@@ -447,7 +447,7 @@ class FileSelectorApp:
         self.options_group = tb.Frame(root, style="Koji.TFrame")
         self.options_group.pack(fill="x")
         self.options_group.columnconfigure(0, weight=1)
-        self.options_group.columnconfigure(1, weight=0, minsize=self._px(390))
+        self.options_group.columnconfigure(1, weight=0, minsize=self._px(340))
 
         self._build_general_options()
         self._build_bookmark_options()
@@ -556,6 +556,7 @@ class FileSelectorApp:
             bootstyle="primary-round-toggle",
         )
         resize_row = tb.Frame(frame, style="Band.TFrame")
+        fast_save_frame = tb.Frame(frame, style="Band.TFrame")
         check_options_frame = tb.Frame(frame, style="Band.TFrame")
         self.resize_pdf_checkbox = tb.Checkbutton(resize_row, variable=self.resize_pdf_var, bootstyle="primary-round-toggle")
         self.error_check_label = tb.Label(check_options_frame, style="Field.TLabel")
@@ -570,7 +571,7 @@ class FileSelectorApp:
             bootstyle="primary-round-toggle",
         )
         self.fast_save_checkbox = tb.Checkbutton(
-            check_options_frame,
+            fast_save_frame,
             variable=self.fast_save_var,
             bootstyle="primary-round-toggle",
         )
@@ -587,11 +588,12 @@ class FileSelectorApp:
         self.resize_size_var = tk.StringVar(value="A4")
         self.resize_size_combo = tb.Combobox(resize_row, textvariable=self.resize_size_var, values=["A3", "A4", "A5", "B4", "B5"], width=8, state="readonly")
         self.resize_size_combo.pack(side="left", padx=self._pad(12, 0))
-        check_options_frame.grid(row=1, column=1, rowspan=6, sticky="nw", padx=self._pad(18, 0), pady=self._px(1))
-        self.fast_save_checkbox.grid(row=0, column=0, sticky="w", pady=self._px(2))
-        self.error_check_label.grid(row=1, column=0, sticky="w", pady=self._pad(6, 0))
-        self.preflight_detail_repair_checkbox.grid(row=2, column=0, sticky="w", pady=self._px(2))
-        self.preflight_confirm_checkbox.grid(row=3, column=0, sticky="w", pady=self._px(2))
+        fast_save_frame.grid(row=1, column=1, sticky="nw", padx=self._pad(18, 0), pady=self._px(3))
+        self.fast_save_checkbox.pack(side="left")
+        check_options_frame.grid(row=4, column=1, rowspan=3, sticky="sw", padx=self._pad(18, 0), pady=self._px(1))
+        self.error_check_label.grid(row=0, column=0, sticky="w", pady=self._pad(6, 0))
+        self.preflight_detail_repair_checkbox.grid(row=1, column=0, sticky="w", pady=self._px(2))
+        self.preflight_confirm_checkbox.grid(row=2, column=0, sticky="w", pady=self._px(2))
 
     def _build_page_number_options(self):
         frame = self._band(1, "page_number_section_label", column=0, columnspan=2)
@@ -685,7 +687,8 @@ class FileSelectorApp:
     def _build_bookmark_options(self, parent=None):
         frame = self._band(0, "bookmark_section_label", parent=parent, column=1, padx=(4, 0))
         frame.columnconfigure(0, weight=1)
-        frame.columnconfigure(1, weight=1)
+        frame.columnconfigure(1, weight=0)
+        frame.columnconfigure(2, weight=0)
         self.add_bookmark_page_number_var = tk.BooleanVar(value=False)
         self.add_page_checkbox = tb.Checkbutton(frame, variable=self.add_page_var, bootstyle="primary-round-toggle")
         self.add_bookmark_page_number_checkbox = tb.Checkbutton(
@@ -705,14 +708,16 @@ class FileSelectorApp:
             bootstyle="primary-round-toggle",
             command=self.toggle_collapse_spinbox,
         )
+        collapse_row = tb.Frame(frame, style="Band.TFrame")
         self.add_bookmark_page_number_checkbox.grid(row=1, column=0, sticky="w", pady=self._px(3))
         self.add_page_checkbox.grid(row=2, column=0, columnspan=3, sticky="w", pady=self._px(3))
         self.expand_all_checkbox.grid(row=3, column=0, sticky="w", pady=self._px(3))
-        self.bookmark_open_level_label = tb.Label(frame, style="Field.TLabel")
-        self.bookmark_open_level_label.grid(row=3, column=1, sticky="e", padx=self._pad(16, 8), pady=self._px(3))
-        self.collapse_spinbox = self._make_spinbox(frame, 1, 10, 1, 1, integer=True)
-        self.collapse_spinbox.grid(row=3, column=2, sticky="w", pady=self._px(3))
-        self.keep_pdf_extension_checkbox.grid(row=4, column=0, columnspan=3, sticky="w", pady=self._px(3))
+        collapse_row.grid(row=4, column=0, columnspan=3, sticky="w", padx=self._pad(28, 0), pady=self._px(3))
+        self.bookmark_open_level_label = tb.Label(collapse_row, style="Field.TLabel")
+        self.bookmark_open_level_label.pack(side="left", padx=self._pad(0, 8))
+        self.collapse_spinbox = self._make_spinbox(collapse_row, 1, 10, 1, 1, integer=True)
+        self.collapse_spinbox.pack(side="left")
+        self.keep_pdf_extension_checkbox.grid(row=5, column=0, columnspan=3, sticky="w", pady=self._px(3))
 
     def _build_asp_options(self):
         frame = self._band(2, "asp_section_label", column=1, padx=(4, 0))
@@ -863,8 +868,8 @@ class FileSelectorApp:
                 "add_bookmark_page_number": "Add page number",
                 "add_page": "Add page count",
                 "keep_pdf_extension": "Keep .pdf",
-                "convert_office": "Convert Office files to PDF before merging",
-                "convert_mail": "Convert .msg/.eml email to PDF",
+                "convert_office": "Convert Office, image, txt/csv files to PDF before merging",
+                "convert_mail": "Convert .msg/.eml email and zip files to PDF",
                 "eml_encoding": "eml encoding",
                 "confirm_temp_folder_delete": "Confirm temp folder delete",
                 "ppt_slide_bookmarks": "Add PowerPoint slide bookmarks",
@@ -921,7 +926,7 @@ class FileSelectorApp:
                 "create_short": "作成",
                 "not_selected": "未選択",
                 "general_options": "結合設定",
-                "page_number_options": "右下へページ番号を印字",
+                "page_number_options": "右下にページ番号を印字",
                 "scale_options": "しおり表示位置補正",
                 "bookmark_options": "しおり表示",
                 "asp_options": "工事情報共有システム（ASP）",
@@ -942,8 +947,8 @@ class FileSelectorApp:
                 "add_bookmark_page_number": "しおり名にページを追加",
                 "add_page": "しおり名に含まれるページ数を追加",
                 "keep_pdf_extension": "しおり名に.pdfを残す",
-                "convert_office": "Word・Excel・PowerPointをPDFに変換してから結合",
-                "convert_mail": "msg・emlメールをPDF化する",
+                "convert_office": "Word・Excel・PowerPoint・画像・txt/csvをPDFに変換してから結合",
+                "convert_mail": "msg・emlメール及びzipファイルをPDF化する",
                 "eml_encoding": "eml文字コード",
                 "confirm_temp_folder_delete": "暫定フォルダ削除確認",
                 "ppt_slide_bookmarks": "PowerPointのスライドしおりを付ける",
