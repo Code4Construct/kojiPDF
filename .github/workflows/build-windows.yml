@@ -11,18 +11,16 @@ on:
         options:
           - nuitka
           - wxs
-          - iss
           - virustotal
           - releases
       stop_after:
         description: "Last stage to run"
         required: true
-        default: "iss"
+        default: "wxs"
         type: choice
         options:
           - nuitka
           - wxs
-          - iss
           - virustotal
           - releases
       artifact_branch:
@@ -57,7 +55,6 @@ env:
   DIST_ARTIFACT: "kojiPDF_2.2.0_nuitka_dist"
   PORTABLE_ARTIFACT: "kojiPDF_Portable_2.2.0_zip"
   MSI_ARTIFACT: "kojiPDF_Setup_2.2.0_msi"
-  EXE_ARTIFACT: "kojiPDF_Setup_2.2.0_exe"
 
 jobs:
   build-installer:
@@ -77,7 +74,7 @@ jobs:
           ARTIFACT_BRANCH: ${{ inputs.artifact_branch }}
           RELEASE_TAG_INPUT: ${{ inputs.release_tag }}
         run: |
-          $stages = @("nuitka", "wxs", "iss", "virustotal", "releases")
+          $stages = @("nuitka", "wxs", "virustotal", "releases")
 
           if ("${{ github.event_name }}" -eq "workflow_dispatch") {
             $start = $env:START_FROM
@@ -88,7 +85,7 @@ jobs:
             if ("${{ github.ref_type }}" -eq "tag") {
               $stop = "releases"
             } else {
-              $stop = "iss"
+              $stop = "wxs"
             }
             $artifactBranch = "${{ github.ref_name }}"
           }
@@ -118,20 +115,17 @@ jobs:
 
           $runNuitka = $startIndex -le 0 -and $stopIndex -ge 0
           $runWxs = $startIndex -le 1 -and $stopIndex -ge 1
-          $runIss = $startIndex -le 2 -and $stopIndex -ge 2
-          $runVirusTotal = $startIndex -le 3 -and $stopIndex -ge 3
-          $runReleases = $startIndex -le 4 -and $stopIndex -ge 4
+          $runVirusTotal = $startIndex -le 2 -and $stopIndex -ge 2
+          $runReleases = $startIndex -le 3 -and $stopIndex -ge 3
 
-          $restoreDist = (-not $runNuitka) -and ($runWxs -or $runIss)
+          $restoreDist = (-not $runNuitka) -and $runWxs
           $restoreMsi = (-not $runWxs) -and ($runVirusTotal -or $runReleases)
-          $restoreExe = $false
           $createPortable = $runNuitka -or $restoreDist
           $restorePortable = (-not $createPortable) -and $runReleases
           $needChecksums = $runVirusTotal -or $runReleases
 
           "restore_dist=$($restoreDist.ToString().ToLowerInvariant())" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           "restore_msi=$($restoreMsi.ToString().ToLowerInvariant())" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
-          "restore_exe=$($restoreExe.ToString().ToLowerInvariant())" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           "create_portable=$($createPortable.ToString().ToLowerInvariant())" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           "restore_portable=$($restorePortable.ToString().ToLowerInvariant())" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           "need_checksums=$($needChecksums.ToString().ToLowerInvariant())" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
@@ -526,94 +520,13 @@ jobs:
 
           throw "No reusable artifact found: $env:ARTIFACT_NAME on branch $env:ARTIFACT_BRANCH"
 
-      - name: Install Inno Setup
-        if: steps.plan.outputs.run_iss == 'true'
-        shell: powershell
-        run: choco install innosetup --yes --no-progress
-
-      - name: Build installer with Inno Setup
-        if: steps.plan.outputs.run_iss == 'true'
-        shell: powershell
-        run: |
-          New-Item -ItemType Directory -Force -Path "installer\output" | Out-Null
-          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
-          if (-not (Test-Path $iscc)) {
-            throw "ISCC.exe was not found at $iscc"
-          }
-          & $iscc "installer\kojiPDF.iss"
-
-      - name: Verify EXE installer output
-        if: steps.plan.outputs.run_iss == 'true'
-        shell: powershell
-        run: |
-          $installer = "installer\output\$env:SETUP_BASENAME.exe"
-          if (-not (Test-Path $installer)) {
-            throw "Installer was not generated: $installer"
-          }
-          Get-Item $installer | Select-Object FullName, Length, LastWriteTime
-
-      - name: Upload EXE installer artifact
-        if: steps.plan.outputs.run_iss == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ env.EXE_ARTIFACT }}
-          path: installer/output/${{ env.SETUP_BASENAME }}.exe
-          if-no-files-found: error
-          retention-days: 30
-
-      - name: Restore latest EXE installer artifact
-        if: steps.plan.outputs.restore_exe == 'true'
-        shell: powershell
-        env:
-          GH_TOKEN: ${{ github.token }}
-          ARTIFACT_NAME: ${{ env.EXE_ARTIFACT }}
-          ARTIFACT_BRANCH: ${{ steps.plan.outputs.artifact_branch }}
-          DOWNLOAD_DIR: installer/output
-        run: |
-          New-Item -ItemType Directory -Force -Path $env:DOWNLOAD_DIR | Out-Null
-
-          $runs = gh run list `
-            --workflow "build-windows.yml" `
-            --branch $env:ARTIFACT_BRANCH `
-            --status completed `
-            --limit 50 `
-            --json databaseId |
-            ConvertFrom-Json
-
-          foreach ($run in $runs) {
-            if ([string]$run.databaseId -eq "${{ github.run_id }}") {
-              continue
-            }
-
-            $artifacts = gh api "repos/${{ github.repository }}/actions/runs/$($run.databaseId)/artifacts?per_page=100" | ConvertFrom-Json
-            $artifact = $artifacts.artifacts |
-              Where-Object { $_.name -eq $env:ARTIFACT_NAME -and -not $_.expired } |
-              Select-Object -First 1
-
-            if ($artifact) {
-              gh run download $run.databaseId --name $env:ARTIFACT_NAME --dir $env:DOWNLOAD_DIR
-              Write-Host "Restored $env:ARTIFACT_NAME from run $($run.databaseId)."
-              exit 0
-            }
-          }
-
-          throw "No reusable artifact found: $env:ARTIFACT_NAME on branch $env:ARTIFACT_BRANCH"
-
       - name: Calculate installer checksums
         id: checksums
         if: steps.plan.outputs.need_checksums == 'true'
         shell: powershell
         run: |
-          $exe = "installer\output\$env:SETUP_BASENAME.exe"
           $msi = "installer\output\$env:SETUP_BASENAME.msi"
           $portable = "installer\output\$env:PORTABLE_BASENAME.zip"
-
-          if (Test-Path $exe) {
-            $exeHash = (Get-FileHash -Algorithm SHA256 $exe).Hash.ToLowerInvariant()
-            "exe_sha256=$exeHash" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
-          } else {
-            "exe_sha256=" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
-          }
 
           if (Test-Path $msi) {
             $msiHash = (Get-FileHash -Algorithm SHA256 $msi).Hash.ToLowerInvariant()
