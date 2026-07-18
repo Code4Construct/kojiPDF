@@ -48,14 +48,6 @@ permissions:
   actions: read
   contents: write
 
-env:
-  APP_VERSION: "2.2.0"
-  SETUP_BASENAME: "kojiPDF_Setup_2.2.0"
-  PORTABLE_BASENAME: "kojiPDF_Portable_2.2.0"
-  DIST_ARTIFACT: "kojiPDF_2.2.0_nuitka_dist"
-  PORTABLE_ARTIFACT: "kojiPDF_Portable_2.2.0_zip"
-  MSI_ARTIFACT: "kojiPDF_Setup_2.2.0_msi"
-
 jobs:
   build-installer:
     name: Build kojiPDF installers
@@ -64,6 +56,28 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+
+      - name: Load app version
+        id: version
+        shell: powershell
+        run: |
+          $version = (Get-Content VERSION -Raw).Trim()
+          if ($version -notmatch '^\d+\.\d+\.\d+$') {
+            throw "VERSION must use semantic version format like 2.2.0. Actual value: $version"
+          }
+
+          "app_version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "setup_basename=kojiPDF_Setup_$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "portable_basename=kojiPDF_Portable_$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "dist_artifact=kojiPDF_$version`_nuitka_dist" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "portable_artifact=kojiPDF_Portable_$version`_zip" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "msi_artifact=kojiPDF_Setup_$version`_msi" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "APP_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "SETUP_BASENAME=kojiPDF_Setup_$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "PORTABLE_BASENAME=kojiPDF_Portable_$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "DIST_ARTIFACT=kojiPDF_$version`_nuitka_dist" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "PORTABLE_ARTIFACT=kojiPDF_Portable_$version`_zip" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "MSI_ARTIFACT=kojiPDF_Setup_$version`_msi" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Plan stages
         id: plan
@@ -242,7 +256,7 @@ jobs:
         if: steps.plan.outputs.run_nuitka == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.DIST_ARTIFACT }}
+          name: ${{ steps.version.outputs.dist_artifact }}
           path: kojiPDFv2.dist
           if-no-files-found: error
           retention-days: 30
@@ -252,7 +266,7 @@ jobs:
         shell: powershell
         env:
           GH_TOKEN: ${{ github.token }}
-          ARTIFACT_NAME: ${{ env.DIST_ARTIFACT }}
+          ARTIFACT_NAME: ${{ steps.version.outputs.dist_artifact }}
           ARTIFACT_BRANCH: ${{ steps.plan.outputs.artifact_branch }}
           DOWNLOAD_DIR: kojiPDFv2.dist
         run: |
@@ -313,8 +327,8 @@ jobs:
         if: steps.plan.outputs.create_portable == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.PORTABLE_ARTIFACT }}
-          path: installer/output/${{ env.PORTABLE_BASENAME }}.zip
+          name: ${{ steps.version.outputs.portable_artifact }}
+          path: installer/output/${{ steps.version.outputs.portable_basename }}.zip
           if-no-files-found: error
           retention-days: 30
 
@@ -323,7 +337,7 @@ jobs:
         shell: powershell
         env:
           GH_TOKEN: ${{ github.token }}
-          ARTIFACT_NAME: ${{ env.PORTABLE_ARTIFACT }}
+          ARTIFACT_NAME: ${{ steps.version.outputs.portable_artifact }}
           ARTIFACT_BRANCH: ${{ steps.plan.outputs.artifact_branch }}
           DOWNLOAD_DIR: installer/output
         run: |
@@ -477,8 +491,8 @@ jobs:
         if: steps.plan.outputs.run_wxs == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.MSI_ARTIFACT }}
-          path: installer/output/${{ env.SETUP_BASENAME }}.msi
+          name: ${{ steps.version.outputs.msi_artifact }}
+          path: installer/output/${{ steps.version.outputs.setup_basename }}.msi
           if-no-files-found: error
           retention-days: 30
 
@@ -487,7 +501,7 @@ jobs:
         shell: powershell
         env:
           GH_TOKEN: ${{ github.token }}
-          ARTIFACT_NAME: ${{ env.MSI_ARTIFACT }}
+          ARTIFACT_NAME: ${{ steps.version.outputs.msi_artifact }}
           ARTIFACT_BRANCH: ${{ steps.plan.outputs.artifact_branch }}
           DOWNLOAD_DIR: installer/output
         run: |
@@ -603,6 +617,67 @@ jobs:
           "analysis_url=$analysisUrl" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           "analysis_id=$analysisId" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
+      - name: Submit portable ZIP to VirusTotal
+        id: virustotal_portable
+        if: steps.plan.outputs.run_virustotal == 'true'
+        shell: powershell
+        env:
+          VIRUSTOTAL_API_KEY: ${{ secrets.VIRUSTOTAL_API_KEY }}
+          PORTABLE_SHA256: ${{ steps.checksums.outputs.portable_sha256 }}
+        run: |
+          $portable = (Resolve-Path "installer\output\$env:PORTABLE_BASENAME.zip").Path
+          $portableHash = $env:PORTABLE_SHA256
+
+          if ([string]::IsNullOrWhiteSpace($env:VIRUSTOTAL_API_KEY)) {
+            Write-Warning "VIRUSTOTAL_API_KEY is not set. Skipping portable ZIP VirusTotal upload."
+            "status=skipped" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+            "url=" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+            "analysis_url=" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+            exit 0
+          }
+
+          $uploadUrl = "https://www.virustotal.com/api/v3/files"
+          $portableSize = (Get-Item $portable).Length
+
+          if ($portableSize -gt 32MB) {
+            $uploadUrlResponse = & curl.exe --silent --show-error --request GET `
+              --url "https://www.virustotal.com/api/v3/files/upload_url" `
+              --header "x-apikey: $env:VIRUSTOTAL_API_KEY"
+
+            if ($LASTEXITCODE -ne 0) {
+              throw "VirusTotal upload URL request failed with exit code $LASTEXITCODE"
+            }
+
+            $uploadUrlJson = $uploadUrlResponse | ConvertFrom-Json
+            $uploadUrl = $uploadUrlJson.data
+            if ([string]::IsNullOrWhiteSpace($uploadUrl)) {
+              throw "VirusTotal did not return an upload URL. Response: $uploadUrlResponse"
+            }
+          }
+
+          $response = & curl.exe --silent --show-error --request POST `
+            --url "$uploadUrl" `
+            --header "x-apikey: $env:VIRUSTOTAL_API_KEY" `
+            --form "file=@$portable"
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "Portable ZIP VirusTotal upload failed with exit code $LASTEXITCODE"
+          }
+
+          $json = $response | ConvertFrom-Json
+          $analysisId = $json.data.id
+          if ([string]::IsNullOrWhiteSpace($analysisId)) {
+            throw "VirusTotal did not return an analysis id. Response: $response"
+          }
+
+          $fileUrl = "https://www.virustotal.com/gui/file/$portableHash/detection"
+          $analysisUrl = "https://www.virustotal.com/gui/analysis/$analysisId"
+
+          "status=submitted" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "url=$fileUrl" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "analysis_url=$analysisUrl" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "analysis_id=$analysisId" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
       - name: Verify VirusTotal has no MSI detections
         id: vt_clean
         if: steps.plan.outputs.run_releases == 'true'
@@ -677,6 +752,80 @@ jobs:
           "malicious=$malicious" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           "suspicious=$suspicious" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
+      - name: Evaluate portable ZIP VirusTotal result
+        id: vt_portable
+        if: steps.plan.outputs.run_releases == 'true'
+        shell: powershell
+        env:
+          VIRUSTOTAL_API_KEY: ${{ secrets.VIRUSTOTAL_API_KEY }}
+          PORTABLE_SHA256: ${{ steps.checksums.outputs.portable_sha256 }}
+          VT_ANALYSIS_ID: ${{ steps.virustotal_portable.outputs.analysis_id }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:PORTABLE_SHA256)) {
+            Write-Warning "Portable ZIP SHA256 is empty. Skipping portable ZIP VirusTotal result."
+            exit 0
+          }
+
+          if ([string]::IsNullOrWhiteSpace($env:VIRUSTOTAL_API_KEY)) {
+            Write-Warning "VIRUSTOTAL_API_KEY is not set. Skipping portable ZIP VirusTotal result."
+            exit 0
+          }
+
+          $headers = @{
+            "x-apikey" = $env:VIRUSTOTAL_API_KEY
+          }
+
+          $stats = $null
+
+          if (-not [string]::IsNullOrWhiteSpace($env:VT_ANALYSIS_ID)) {
+            for ($i = 1; $i -le 20; $i++) {
+              $analysis = Invoke-RestMethod `
+                -Method Get `
+                -Uri "https://www.virustotal.com/api/v3/analyses/$env:VT_ANALYSIS_ID" `
+                -Headers $headers
+
+              if ($analysis.data.attributes.status -eq "completed") {
+                $stats = $analysis.data.attributes.stats
+                break
+              }
+
+              Write-Host "Portable ZIP VirusTotal analysis is $($analysis.data.attributes.status). Waiting before retry $i/20..."
+              Start-Sleep -Seconds 15
+            }
+          }
+
+          if ($null -eq $stats) {
+            try {
+              $fileReport = Invoke-RestMethod `
+                -Method Get `
+                -Uri "https://www.virustotal.com/api/v3/files/$env:PORTABLE_SHA256" `
+                -Headers $headers
+              $stats = $fileReport.data.attributes.last_analysis_stats
+            } catch {
+              Write-Warning "Portable ZIP VirusTotal report was not available. It will not be shown in release notes."
+              exit 0
+            }
+          }
+
+          if ($null -eq $stats) {
+            Write-Warning "VirusTotal returned no analysis stats for portable ZIP hash $env:PORTABLE_SHA256."
+            exit 0
+          }
+
+          $malicious = [int]$stats.malicious
+          $suspicious = [int]$stats.suspicious
+          $url = "https://www.virustotal.com/gui/file/$env:PORTABLE_SHA256/detection"
+
+          if ($malicious -ne 0 -or $suspicious -ne 0) {
+            Write-Warning "Portable ZIP VirusTotal detections are malicious=$malicious suspicious=$suspicious. Hiding portable ZIP VirusTotal result from release notes."
+            exit 0
+          }
+
+          "show=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "url=$url" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "malicious=$malicious" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "suspicious=$suspicious" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
       - name: Resolve release tag
         id: release_tag
         if: steps.plan.outputs.run_releases == 'true'
@@ -705,9 +854,13 @@ jobs:
           VT_URL: ${{ steps.vt_clean.outputs.url }}
           VT_MALICIOUS: ${{ steps.vt_clean.outputs.malicious }}
           VT_SUSPICIOUS: ${{ steps.vt_clean.outputs.suspicious }}
+          PORTABLE_VT_SHOW: ${{ steps.vt_portable.outputs.show }}
+          PORTABLE_VT_URL: ${{ steps.vt_portable.outputs.url }}
+          PORTABLE_VT_MALICIOUS: ${{ steps.vt_portable.outputs.malicious }}
+          PORTABLE_VT_SUSPICIOUS: ${{ steps.vt_portable.outputs.suspicious }}
           RELEASE_TAG: ${{ steps.release_tag.outputs.tag }}
         run: |
-          @"
+          $notes = @"
           ## kojiPDF $env:RELEASE_TAG
 
           Windows MSI installer and portable ZIP built by GitHub Actions.
@@ -718,7 +871,17 @@ jobs:
           - VirusTotal detections: malicious=$env:VT_MALICIOUS suspicious=$env:VT_SUSPICIOUS
           - Portable ZIP: $env:PORTABLE_BASENAME.zip
           - Portable ZIP SHA256: $env:PORTABLE_SHA256
-          "@ | Set-Content -Path release-notes.md -Encoding utf8
+          "@
+
+          if ($env:PORTABLE_VT_SHOW -eq "true") {
+            $notes += @"
+
+          - VirusTotal portable ZIP check: $env:PORTABLE_VT_URL
+          - VirusTotal portable ZIP detections: malicious=$env:PORTABLE_VT_MALICIOUS suspicious=$env:PORTABLE_VT_SUSPICIOUS
+          "@
+          }
+
+          $notes | Set-Content -Path release-notes.md -Encoding utf8
 
       - name: Publish GitHub Release
         if: steps.plan.outputs.run_releases == 'true'
@@ -727,6 +890,6 @@ jobs:
           tag_name: ${{ steps.release_tag.outputs.tag }}
           body_path: release-notes.md
           files: |
-            installer/output/${{ env.SETUP_BASENAME }}.msi
-            installer/output/${{ env.PORTABLE_BASENAME }}.zip
+            installer/output/${{ steps.version.outputs.setup_basename }}.msi
+            installer/output/${{ steps.version.outputs.portable_basename }}.zip
           fail_on_unmatched_files: true
