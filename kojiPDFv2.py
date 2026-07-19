@@ -130,6 +130,8 @@ def write_issue_report(output_file_path, issue_report):
 
 
 def save_pdf_collecting_mupdf_warnings(pdf_document, output_file_path, save_options):
+    save_options = dict(save_options)
+    save_options.pop("auto_clean_on_warning", None)
     TOOLS.reset_mupdf_warnings()
     TOOLS.mupdf_display_errors(False)
     TOOLS.mupdf_display_warnings(False)
@@ -382,6 +384,7 @@ def save_final_pdf(
 ):
     output_dir = os.path.dirname(os.path.abspath(output_file_path)) or "."
     candidate_path = None
+    auto_clean_on_warning = bool(save_options.get("auto_clean_on_warning", True))
 
     try:
         with tempfile.NamedTemporaryFile(
@@ -402,9 +405,12 @@ def save_final_pdf(
         if warnings and not confirm_save_warnings:
             add_issue(issue_report, "MuPDF save warning", warnings)
             print("MuPDF warnings were detected during final save.")
-            print("Step confirm is off, so a clean save will be tried automatically.")
             print(warnings)
-            should_retry_clean = True
+            if auto_clean_on_warning:
+                print("Step confirm is off, so a clean save will be tried automatically.")
+                should_retry_clean = True
+            else:
+                print("Automatic clean save is off for this save mode. Using the normally saved merged PDF.")
 
         while warnings and confirm_save_warnings:
             add_issue(issue_report, "MuPDF save warning", warnings)

@@ -51,6 +51,11 @@ SECTION_TEXT_COLOR = "#073f66"
 STATUS_TEXT_COLOR = "#516475"
 RUN_BUTTON_FILL = "#8f1d2c"
 RUN_BUTTON_FILL_HOVER = "#a92536"
+SAVE_MODE_OPTIONS = {
+    "speed": {"save_options": {"garbage": 1, "deflate": False, "auto_clean_on_warning": False}},
+    "balanced": {"save_options": {"garbage": 1, "deflate": True, "auto_clean_on_warning": False}},
+    "smaller_file": {"save_options": {"garbage": 4, "deflate": True, "auto_clean_on_warning": True}},
+}
 
 
 def _scaled_pixel(value, factor):
@@ -447,7 +452,7 @@ class FileSelectorApp:
         self.options_group = tb.Frame(root, style="Koji.TFrame")
         self.options_group.pack(fill="x")
         self.options_group.columnconfigure(0, weight=1)
-        self.options_group.columnconfigure(1, weight=0, minsize=self._px(340))
+        self.options_group.columnconfigure(1, weight=0, minsize=self._px(290))
 
         self._build_general_options()
         self._build_bookmark_options()
@@ -522,7 +527,7 @@ class FileSelectorApp:
         self.preflight_confirm_var = tk.BooleanVar(value=False)
         self.asper_format_var = tk.BooleanVar(value=False)
         self.keep_pdf_extension_var = tk.BooleanVar(value=False)
-        self.fast_save_var = tk.BooleanVar(value=False)
+        self.save_mode_var = tk.StringVar(value="balanced")
         self.convert_office_checkbox = tb.Checkbutton(
             frame,
             variable=self.convert_office_var,
@@ -556,7 +561,7 @@ class FileSelectorApp:
             bootstyle="primary-round-toggle",
         )
         resize_row = tb.Frame(frame, style="Band.TFrame")
-        fast_save_frame = tb.Frame(frame, style="Band.TFrame")
+        save_mode_frame = tb.Frame(frame, style="Band.TFrame")
         check_options_frame = tb.Frame(frame, style="Band.TFrame")
         self.resize_pdf_checkbox = tb.Checkbutton(resize_row, variable=self.resize_pdf_var, bootstyle="primary-round-toggle")
         self.error_check_label = tb.Label(check_options_frame, style="Field.TLabel")
@@ -570,11 +575,16 @@ class FileSelectorApp:
             variable=self.preflight_confirm_var,
             bootstyle="primary-round-toggle",
         )
-        self.fast_save_checkbox = tb.Checkbutton(
-            fast_save_frame,
-            variable=self.fast_save_var,
-            bootstyle="primary-round-toggle",
+        self.save_mode_label = tb.Label(save_mode_frame, style="Field.TLabel")
+        self.save_mode_combo = tb.Combobox(
+            save_mode_frame,
+            textvariable=self.save_mode_var,
+            values=self._save_mode_display_values(),
+            width=13,
+            state="readonly",
         )
+        self.save_mode_combo.bind("<<ComboboxSelected>>", self._on_save_mode_selected)
+        self._set_save_mode_code("balanced")
         self.convert_office_checkbox.grid(row=1, column=0, sticky="w", pady=self._px(3))
         mail_options_row.grid(row=2, column=0, sticky="w", padx=self._pad(66, 0), pady=self._px(3))
         self.convert_mail_checkbox.pack(side="left")
@@ -588,8 +598,9 @@ class FileSelectorApp:
         self.resize_size_var = tk.StringVar(value="A4")
         self.resize_size_combo = tb.Combobox(resize_row, textvariable=self.resize_size_var, values=["A3", "A4", "A5", "B4", "B5"], width=8, state="readonly")
         self.resize_size_combo.pack(side="left", padx=self._pad(12, 0))
-        fast_save_frame.grid(row=1, column=1, sticky="nw", padx=self._pad(18, 0), pady=self._px(3))
-        self.fast_save_checkbox.pack(side="left")
+        save_mode_frame.grid(row=1, column=1, sticky="nw", padx=self._pad(26, 0), pady=self._px(3))
+        self.save_mode_label.pack(side="left", padx=self._pad(0, 6))
+        self.save_mode_combo.pack(side="left")
         check_options_frame.grid(row=4, column=1, rowspan=3, sticky="sw", padx=self._pad(18, 0), pady=self._px(1))
         self.error_check_label.grid(row=0, column=0, sticky="w", pady=self._pad(6, 0))
         self.preflight_detail_repair_checkbox.grid(row=1, column=0, sticky="w", pady=self._px(2))
@@ -826,6 +837,50 @@ class FileSelectorApp:
         }
         return legacy_labels.get(selected, "auto")
 
+    SAVE_MODE_CODES = ("speed", "balanced", "smaller_file")
+
+    def _save_mode_labels(self):
+        if self.language == "ja":
+            return {
+                "speed": "速度重視",
+                "balanced": "バランス",
+                "smaller_file": "圧縮重視",
+            }
+        return {
+            "speed": "Speed",
+            "balanced": "Balanced",
+            "smaller_file": "Smaller File",
+        }
+
+    def _save_mode_display_values(self):
+        labels = self._save_mode_labels()
+        return [labels[code] for code in self.SAVE_MODE_CODES]
+
+    def _set_save_mode_code(self, code):
+        labels = self._save_mode_labels()
+        self.save_mode_var.set(labels.get(code, labels["balanced"]))
+
+    def _current_save_mode_code(self):
+        selected = self.save_mode_var.get()
+        labels = self._save_mode_labels()
+        for code, label in labels.items():
+            if selected == label:
+                return code
+        legacy_labels = {
+            "Fast": "speed",
+            "高速": "speed",
+            "Speed": "speed",
+            "速度重視": "speed",
+            "Balanced": "balanced",
+            "バランス": "balanced",
+            "Smaller File": "smaller_file",
+            "圧縮重視": "smaller_file",
+        }
+        return legacy_labels.get(selected, "balanced")
+
+    def _on_save_mode_selected(self, _event=None):
+        self._set_save_mode_code(self._current_save_mode_code())
+
     def _text(self, key):
         translations = {
             "en": {
@@ -874,7 +929,7 @@ class FileSelectorApp:
                 "confirm_temp_folder_delete": "Confirm temp folder delete",
                 "ppt_slide_bookmarks": "Add PowerPoint slide bookmarks",
                 "resize_pdf": "Resize all PDFs to selected page size",
-                "fast_save": "Fast",
+                "save_mode": "Save Mode",
                 "error_check": "Error check",
                 "preflight_detail_repair": "Detailed check",
                 "preflight_confirm": "Step confirm",
@@ -953,7 +1008,7 @@ class FileSelectorApp:
                 "confirm_temp_folder_delete": "暫定フォルダ削除確認",
                 "ppt_slide_bookmarks": "PowerPointのスライドしおりを付ける",
                 "resize_pdf": "すべてのPDFを指定サイズに変更",
-                "fast_save": "高速",
+                "save_mode": "保存方式",
                 "error_check": "エラーチェック",
                 "preflight_detail_repair": "詳細チェック",
                 "preflight_confirm": "逐次確認",
@@ -1073,7 +1128,10 @@ class FileSelectorApp:
         self.confirm_temp_folder_delete_checkbox.configure(text=self._text("confirm_temp_folder_delete"))
         self.ppt_slide_bookmarks_checkbox.configure(text=self._text("ppt_slide_bookmarks"))
         self.resize_pdf_checkbox.configure(text=self._text("resize_pdf"))
-        self.fast_save_checkbox.configure(text=self._text("fast_save"))
+        current_save_mode = self._current_save_mode_code()
+        self.save_mode_label.configure(text=self._text("save_mode"))
+        self.save_mode_combo.configure(values=self._save_mode_display_values())
+        self._set_save_mode_code(current_save_mode)
         self.error_check_label.configure(text=self._text("error_check"))
         self.preflight_detail_repair_checkbox.configure(text=self._text("preflight_detail_repair"))
         self.preflight_confirm_checkbox.configure(text=self._text("preflight_confirm"))
@@ -1586,9 +1644,8 @@ class FileSelectorApp:
 
     @property
     def save_options(self):
-        if self.fast_save_var.get():
-            return {"garbage": 1, "deflate": False}
-        return {"garbage": 4, "deflate": True}
+        save_mode = self._current_save_mode_code()
+        return dict(SAVE_MODE_OPTIONS[save_mode]["save_options"])
 
     @property
     def asper_format(self):
