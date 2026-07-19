@@ -99,6 +99,17 @@ def add_issue(issue_report, category, message):
         )
 
 
+def summarize_issue_message(message, max_lines=40):
+    text = str(message)
+    lines = text.splitlines()
+    if len(lines) <= max_lines:
+        return text
+
+    shown = lines[:max_lines]
+    shown.append(f"... {len(lines) - max_lines} more warning lines omitted")
+    return "\n".join(shown)
+
+
 def write_issue_report(output_file_path, issue_report):
     if not issue_report:
         return None
@@ -118,12 +129,12 @@ def write_issue_report(output_file_path, issue_report):
             [
                 f"[{index}] {item.get('category', 'Issue')}",
                 f"Time: {item.get('time', '')}",
-                str(item.get("message", "")),
+                summarize_issue_message(item.get("message", "")),
                 "",
             ]
         )
 
-    with open(report_path, "w", encoding="utf-8") as report_file:
+    with open(report_path, "w", encoding="utf-8-sig") as report_file:
         report_file.write("\n".join(lines))
     print(f"エラー一覧を保存しました: {report_path}")
     return report_path
@@ -546,13 +557,14 @@ def create_pdf(
         print("電脳ASPer向けにしおり名を最終調整しています。")
         output_pdf = asper_bookmarks.last_bookmarks_rename(output_pdf)
 
+    print("しおり名末尾の古いページ番号を整理しています。")
     if add_bookmark_page_number or add_page:
-        print("しおり名にページ番号または含まれるページ数を追記しています。")
-        output_pdf = bookmark_page_counts.add_numbers_to_bookmarks(
-            output_pdf,
-            add_bookmark_page_number=add_bookmark_page_number,
-            add_included_page_count=add_page,
-        )
+        print("しおり名にページ番号または含まれるページ数を付け直しています。")
+    output_pdf = bookmark_page_counts.add_numbers_to_bookmarks(
+        output_pdf,
+        add_bookmark_page_number=add_bookmark_page_number,
+        add_included_page_count=add_page,
+    )
 
     temp_output_path = output_file_path[:-4] + "temp.PDF"
     print("一時PDFを保存しています。")

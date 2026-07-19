@@ -22,9 +22,9 @@ def pad_content_stream_boundaries(page):
 def add_page_numbers_to_doc(
     doc,
     start_number=1,
-    font_size=20,
-    margin_right=30,
-    margin_bottom=25,
+    font_size=30,
+    margin_right=10,
+    margin_bottom=10,
     fontname="helv",
     fill=(0, 0, 0),
     fill_opacity=1.0,
@@ -79,9 +79,9 @@ if __name__ == "__main__":
     doc = add_page_numbers_to_doc(
         doc,
         start_number=1,
-        font_size=100,
-        margin_right=30,
-        margin_bottom=25,
+        font_size=30,
+        margin_right=10,
+        margin_bottom=10,
         fontname="helv",
         fill=(1, 0, 0),       # 赤
         fill_opacity=0.2,     # 半透明

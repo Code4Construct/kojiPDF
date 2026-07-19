@@ -1,16 +1,27 @@
+import re
+
 import fitz
 
 
+TRAILING_NUMBER_SUFFIX_RE = re.compile(r"(?:_\d+)+$")
+
+
+def remove_trailing_number_suffix(title):
+    """Remove one or more trailing '_number' suffixes from a bookmark title."""
+    if not isinstance(title, str):
+        return title
+    return TRAILING_NUMBER_SUFFIX_RE.sub("", title)
+
+
 def add_numbers_to_bookmarks(output_pdf, add_bookmark_page_number=False, add_included_page_count=False):
-    """Append selected numeric suffixes to bookmark titles."""
-    if not add_bookmark_page_number and not add_included_page_count:
-        return output_pdf
+    """Remove old numeric suffixes, then append selected numeric suffixes."""
 
     toc = output_pdf.get_toc()
     new_toc = []
 
     for i, entry in enumerate(toc):
         level, title, page = entry[:3]
+        title = remove_trailing_number_suffix(title)
         suffix_parts = []
 
         if add_bookmark_page_number:

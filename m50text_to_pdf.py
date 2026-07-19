@@ -7,7 +7,29 @@ from pathlib import Path
 import fitz
 
 
-SUPPORTED_TEXT_EXTENSIONS = {".txt", ".csv"}
+NON_TEXT_EXTENSIONS = {
+    ".pdf",
+    ".doc",
+    ".docx",
+    ".xls",
+    ".xlsx",
+    ".xlsm",
+    ".ppt",
+    ".pptx",
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".gif",
+    ".bmp",
+    ".tif",
+    ".tiff",
+    ".webp",
+    ".zip",
+    ".7z",
+    ".rar",
+    ".exe",
+    ".dll",
+}
 TEXT_ENCODING_CANDIDATES = (
     "utf-8-sig",
     "utf-8",
@@ -16,6 +38,19 @@ TEXT_ENCODING_CANDIDATES = (
     "iso-2022-jp",
     "euc-jp",
     "utf-16",
+)
+TEXT_SAMPLE_SIZE = 8192
+MAX_TEXT_SCORE_RATIO = 0.08
+BINARY_SIGNATURES = (
+    b"%PDF",
+    b"PK\x03\x04",
+    b"PK\x05\x06",
+    b"\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1",
+    b"\xFF\xD8\xFF",
+    b"\x89PNG\r\n\x1A\n",
+    b"GIF87a",
+    b"GIF89a",
+    b"BM",
 )
 
 
@@ -67,6 +102,40 @@ def read_text_file(text_path: Path) -> str:
     if best_text:
         return best_text
     return data.decode("utf-8", errors="replace")
+
+
+def is_probably_text_file(path: Path) -> bool:
+    if path.suffix.lower() in NON_TEXT_EXTENSIONS:
+        return False
+
+    try:
+        data = path.read_bytes()[:TEXT_SAMPLE_SIZE]
+    except OSError:
+        return False
+
+    if not data:
+        return True
+    if any(data.startswith(signature) for signature in BINARY_SIGNATURES):
+        return False
+    if b"\x00" in data:
+        return False
+
+    best_score = 10**9
+    best_length = 0
+    for encoding in TEXT_ENCODING_CANDIDATES:
+        try:
+            decoded = data.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+        best_score = min(best_score, mojibake_score(decoded))
+        best_length = max(best_length, len(decoded))
+
+    if best_length == 0:
+        decoded = data.decode("utf-8", errors="replace")
+        best_score = mojibake_score(decoded)
+        best_length = len(decoded)
+
+    return best_score / max(best_length, 1) <= MAX_TEXT_SCORE_RATIO
 
 
 def wrap_line(line: str, max_width: float, fontname: str, fontsize: float) -> list[str]:
@@ -141,7 +210,7 @@ def convert_all_texts_to_pdf(folder_path: str | Path, issue_report=None) -> list
     text_files = sorted(
         path
         for path in folder_path.rglob("*")
-        if path.is_file() and path.suffix.lower() in SUPPORTED_TEXT_EXTENSIONS
+        if path.is_file() and is_probably_text_file(path)
     )
 
     results = []

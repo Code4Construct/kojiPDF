@@ -56,6 +56,35 @@ SAVE_MODE_OPTIONS = {
     "balanced": {"save_options": {"garbage": 1, "deflate": True, "auto_clean_on_warning": False}},
     "smaller_file": {"save_options": {"garbage": 4, "deflate": True, "auto_clean_on_warning": True}},
 }
+PAGE_NUMBER_FONT_LABELS = {
+    "ja": {
+        "helv": "ゴシック体",
+        "cour": "等幅文字",
+        "tiro": "明朝体",
+    },
+    "en": {
+        "helv": "Sans serif",
+        "cour": "Monospace",
+        "tiro": "Serif",
+    },
+}
+PAGE_NUMBER_COLOR_LABELS = {
+    "ja": {
+        "red": "赤",
+        "blue": "青",
+        "black": "黒",
+    },
+    "en": {
+        "red": "Red",
+        "blue": "Blue",
+        "black": "Black",
+    },
+}
+PAGE_NUMBER_COLOR_VALUES = {
+    "red": (1, 0, 0),
+    "blue": (0, 0, 1),
+    "black": (0, 0, 0),
+}
 
 
 def _scaled_pixel(value, factor):
@@ -268,12 +297,6 @@ class FileSelectorApp:
         self._progress_queue = queue.Queue()
         self._progress_poll_after_id = None
         self.language = "ja"
-        self.color_choices = {
-            "Red": (1, 0, 0),
-            "Blue": (0, 0, 1),
-            "Black": (0, 0, 0),
-        }
-
         self.window = tb.Window(themename="flatly")
         self.tk_scaling = float(self.window.tk.call("tk", "scaling"))
         self.ui_scale = self.tk_scaling / TK_SCALING_BASELINE
@@ -635,22 +658,34 @@ class FileSelectorApp:
         self.page_start_number_spinbox = self._make_spinbox(start_field, 1, 9999, 1, 1, integer=True)
         self.page_start_number_spinbox.pack(side="left")
         font_size_field, self.page_font_size_label = make_page_field(0, 1)
-        self.page_font_size_spinbox = self._make_spinbox(font_size_field, 1, 300, 1, 100, integer=True)
+        self.page_font_size_spinbox = self._make_spinbox(font_size_field, 1, 300, 1, 30, integer=True)
         self.page_font_size_spinbox.pack(side="left")
         margin_right_field, self.page_margin_right_label = make_page_field(0, 2)
-        self.page_margin_right_spinbox = self._make_spinbox(margin_right_field, 0, 1000, 1, 30, integer=True)
+        self.page_margin_right_spinbox = self._make_spinbox(margin_right_field, 0, 1000, 1, 10, integer=True)
         self.page_margin_right_spinbox.pack(side="left")
         margin_bottom_field, self.page_margin_bottom_label = make_page_field(0, 3)
-        self.page_margin_bottom_spinbox = self._make_spinbox(margin_bottom_field, 0, 1000, 1, 25, integer=True)
+        self.page_margin_bottom_spinbox = self._make_spinbox(margin_bottom_field, 0, 1000, 1, 10, integer=True)
         self.page_margin_bottom_spinbox.pack(side="left")
 
         font_field, self.page_font_label = make_page_field(1, 0)
-        self.page_font_var = tk.StringVar(value="helv")
-        self.page_font_combo = tb.Combobox(font_field, textvariable=self.page_font_var, values=["helv", "cour", "tiro"], width=10, state="readonly")
+        self.page_font_var = tk.StringVar(value=self._page_number_font_labels()["helv"])
+        self.page_font_combo = tb.Combobox(
+            font_field,
+            textvariable=self.page_font_var,
+            values=self._page_number_font_display_values(),
+            width=10,
+            state="readonly",
+        )
         self.page_font_combo.pack(side="left")
         color_field, self.page_color_label = make_page_field(1, 1)
-        self.page_color_var = tk.StringVar(value="Red")
-        self.page_color_combo = tb.Combobox(color_field, textvariable=self.page_color_var, values=list(self.color_choices), width=10, state="readonly")
+        self.page_color_var = tk.StringVar(value=self._page_number_color_labels()["red"])
+        self.page_color_combo = tb.Combobox(
+            color_field,
+            textvariable=self.page_color_var,
+            values=self._page_number_color_display_values(),
+            width=10,
+            state="readonly",
+        )
         self.page_color_combo.pack(side="left")
         opacity_field, self.page_opacity_label = make_page_field(1, 2)
         self.page_opacity_spinbox = self._make_spinbox(opacity_field, 0.05, 1.00, 0.05, 0.20, integer=False)
@@ -837,6 +872,67 @@ class FileSelectorApp:
         }
         return legacy_labels.get(selected, "auto")
 
+    PAGE_NUMBER_FONT_CODES = ("helv", "cour", "tiro")
+
+    def _page_number_font_labels(self):
+        return PAGE_NUMBER_FONT_LABELS.get(self.language, PAGE_NUMBER_FONT_LABELS["en"])
+
+    def _page_number_font_display_values(self):
+        labels = self._page_number_font_labels()
+        return [labels[code] for code in self.PAGE_NUMBER_FONT_CODES]
+
+    def _set_page_number_font_code(self, code):
+        labels = self._page_number_font_labels()
+        self.page_font_var.set(labels.get(code, labels["helv"]))
+
+    def _current_page_number_font_code(self):
+        selected = self.page_font_var.get()
+        labels = self._page_number_font_labels()
+        for code, label in labels.items():
+            if selected == label:
+                return code
+        legacy_labels = {
+            "helv": "helv",
+            "cour": "cour",
+            "tiro": "tiro",
+            "ゴシック体": "helv",
+            "等幅文字": "cour",
+            "明朝体": "tiro",
+            "Sans serif": "helv",
+            "Monospace": "cour",
+            "Serif": "tiro",
+        }
+        return legacy_labels.get(selected, "helv")
+
+    PAGE_NUMBER_COLOR_CODES = ("red", "blue", "black")
+
+    def _page_number_color_labels(self):
+        return PAGE_NUMBER_COLOR_LABELS.get(self.language, PAGE_NUMBER_COLOR_LABELS["en"])
+
+    def _page_number_color_display_values(self):
+        labels = self._page_number_color_labels()
+        return [labels[code] for code in self.PAGE_NUMBER_COLOR_CODES]
+
+    def _set_page_number_color_code(self, code):
+        labels = self._page_number_color_labels()
+        self.page_color_var.set(labels.get(code, labels["red"]))
+
+    def _current_page_number_color_code(self):
+        selected = self.page_color_var.get()
+        labels = self._page_number_color_labels()
+        for code, label in labels.items():
+            if selected == label:
+                return code
+        legacy_labels = {
+            "Red": "red",
+            "Blue": "blue",
+            "Black": "black",
+            "赤": "red",
+            "青": "blue",
+            "黒": "black",
+        }
+        return legacy_labels.get(selected, "red")
+
     SAVE_MODE_CODES = ("speed", "balanced", "smaller_file")
 
     def _save_mode_labels(self):
@@ -923,7 +1019,7 @@ class FileSelectorApp:
                 "add_bookmark_page_number": "Add page number",
                 "add_page": "Add page count",
                 "keep_pdf_extension": "Keep .pdf",
-                "convert_office": "Convert Office, image, txt/csv files to PDF before merging",
+                "convert_office": "Convert Office, image, text/code files to PDF before merging",
                 "convert_mail": "Convert .msg/.eml email and zip files to PDF",
                 "eml_encoding": "eml encoding",
                 "confirm_temp_folder_delete": "Confirm temp folder delete",
@@ -1002,7 +1098,7 @@ class FileSelectorApp:
                 "add_bookmark_page_number": "しおり名にページを追加",
                 "add_page": "しおり名に含まれるページ数を追加",
                 "keep_pdf_extension": "しおり名に.pdfを残す",
-                "convert_office": "Word・Excel・PowerPoint・画像・txt/csvをPDFに変換してから結合",
+                "convert_office": "Word・Excel・PowerPoint・画像・テキスト/コードをPDFに変換してから結合",
                 "convert_mail": "msg・emlメール及びzipファイルをPDF化する",
                 "eml_encoding": "eml文字コード",
                 "confirm_temp_folder_delete": "暫定フォルダ削除確認",
@@ -1141,8 +1237,14 @@ class FileSelectorApp:
         self.page_font_size_label.configure(text=self._text("page_font_size"))
         self.page_margin_right_label.configure(text=self._text("page_margin_right"))
         self.page_margin_bottom_label.configure(text=self._text("page_margin_bottom"))
+        current_page_font = self._current_page_number_font_code()
         self.page_font_label.configure(text=self._text("page_font"))
+        self.page_font_combo.configure(values=self._page_number_font_display_values())
+        self._set_page_number_font_code(current_page_font)
+        current_page_color = self._current_page_number_color_code()
         self.page_color_label.configure(text=self._text("page_color"))
+        self.page_color_combo.configure(values=self._page_number_color_display_values())
+        self._set_page_number_color_code(current_page_color)
         self.page_opacity_label.configure(text=self._text("page_opacity"))
         self.relative_scale_radio.configure(text=self._text("relative_scale"))
         self.absolute_scale_radio.configure(text=self._text("absolute_scale"))
@@ -1666,8 +1768,8 @@ class FileSelectorApp:
             "font_size": self._spinbox_value(self.page_font_size_spinbox),
             "margin_right": self._spinbox_value(self.page_margin_right_spinbox),
             "margin_bottom": self._spinbox_value(self.page_margin_bottom_spinbox),
-            "fontname": self.page_font_var.get(),
-            "fill": self.color_choices[self.page_color_var.get()],
+            "fontname": self._current_page_number_font_code(),
+            "fill": PAGE_NUMBER_COLOR_VALUES[self._current_page_number_color_code()],
             "fill_opacity": self._spinbox_value(self.page_opacity_spinbox),
         }
 
