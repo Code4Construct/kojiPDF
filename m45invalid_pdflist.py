@@ -4,6 +4,25 @@ import tempfile
 from fitz import Document, EmptyFileError, FileDataError, TOOLS
 
 
+NON_REPAIRABLE_WARNING_PATTERNS = (
+    "non-embedded font using identity encoding",
+)
+
+
+def _repairable_warnings(warnings):
+    lines = [
+        line
+        for line in (warnings or "").splitlines()
+        if line.strip()
+    ]
+    repairable_lines = [
+        line
+        for line in lines
+        if not any(pattern in line for pattern in NON_REPAIRABLE_WARNING_PATTERNS)
+    ]
+    return "\n".join(repairable_lines)
+
+
 def _run_with_mupdf_messages_hidden(callback):
     TOOLS.reset_mupdf_warnings()
     TOOLS.mupdf_display_errors(False)
@@ -112,11 +131,13 @@ def check_pdf(full_path, detailed=False):
     except Exception as e:
         return {"path": full_path, "status": "error", "message": f"Other error: {e}", "warnings": ""}
 
+    repairable_warnings = _repairable_warnings(warnings)
+
     return {
         "path": full_path,
-        "status": "warning" if warnings else "ok",
-        "message": "MuPDF warnings" if warnings else "OK",
-        "warnings": warnings,
+        "status": "warning" if repairable_warnings else "ok",
+        "message": "MuPDF warnings" if repairable_warnings else "OK",
+        "warnings": repairable_warnings,
     }
 
 

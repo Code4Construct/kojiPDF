@@ -1,8 +1,8 @@
-; Inno Setup script for kojiPDF v2.2.0
+; Inno Setup script for kojiPDF v2.3.0
 ; Nuitka output folder: ..\kojiPDFv2.dist
 
 #define MyAppName "kojiPDF"
-#define MyAppVersion "2.2.0"
+#define MyAppVersion "2.3.0"
 #define MyAppPublisher "Code4Construct"
 #define MyAppURL "https://github.com/Code4Construct/kojiPDFv210"
 #define MyAppExeName "kojiPDFv2.exe"

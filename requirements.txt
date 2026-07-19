@@ -1,5 +1,12 @@
-Nuitka==2.6.9
-Pillow
+# Runtime dependencies
 PyMuPDF>=1.24.2
-pywin32==308
+Pillow>=10.0.0
 ttkbootstrap==1.10.1
+pywin32==308; platform_system == "Windows"
+
+# Build dependency
+Nuitka==2.6.9
+
+# External applications used at runtime:
+# - Microsoft Office / Outlook for Office and .msg conversion
+# - Microsoft Edge or Google Chrome for email HTML-to-PDF conversion

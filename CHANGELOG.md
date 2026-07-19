@@ -2,21 +2,24 @@
 
 This repository now consolidates the separate kojiPDF version repositories into the main `Code4Construct/kojiPDF` repository.
 
-## v2.2.0 integrated release
+## v2.3.0 integrated release
 
 - Integrated the v1.5.0 changes from `Code4Construct/kojiPDFv150`.
 - Integrated the v2.0.0 changes from `Code4Construct/kojiPDFv200`.
-- Integrated the v2.2.0 changes from `Code4Construct/kojiPDFv210`.
+- Integrated the v2.3.0 changes from `Code4Construct/kojiPDFv210`.
 - Updated project links so the integrated project points back to `Code4Construct/kojiPDF`.
-- Updated the usage command to run `kojiPDFv2.py`, matching the v2.2.0 application entry point.
+- Updated the usage command to run `kojiPDFv2.py`, matching the v2.3.0 application entry point.
 
-## v2.2.0
+## v2.3.0
 
 - Added the v2 application entry point as `kojiPDFv2.py`.
 - Expanded the Windows build workflow and installer configuration.
 - Added WiX installer files and release license text.
 - Moved application icons under `assets/icons/`.
 - Improved PDF preflight, invalid PDF handling, resizing, page numbering, bookmarks, and save warning behavior.
+- Updated UI and README messaging for paperless meeting materials, email data cleanup, and construction document inspections with ASP support.
+- Clarified support for organizing folder hierarchy, email attachments, and ZIP contents as multi-level bookmarks.
+- Updated dependency documentation for Office, Outlook, Edge/Chrome, PyMuPDF, Pillow, pywin32, ttkbootstrap, and Nuitka.
 
 ## v2.0.0
 

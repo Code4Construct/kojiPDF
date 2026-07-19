@@ -56,7 +56,7 @@ RUN_BUTTON_FILL_HOVER = "#a92536"
 SAVE_MODE_OPTIONS = {
     "speed": {"save_options": {"garbage": 1, "deflate": False, "auto_clean_on_warning": False}},
     "balanced": {"save_options": {"garbage": 1, "deflate": True, "auto_clean_on_warning": False}},
-    "smaller_file": {"save_options": {"garbage": 4, "deflate": True, "auto_clean_on_warning": True}},
+    "smaller_file": {"save_options": {"garbage": 4, "deflate": True, "auto_clean_on_warning": False}},
 }
 PAGE_NUMBER_FONT_LABELS = {
     "ja": {
@@ -537,7 +537,7 @@ class FileSelectorApp:
         notice_panel = tk.Frame(intro_panel, bg=PANEL_BG)
         notice_panel.columnconfigure(0, minsize=self._px(70))
         notice_panel.columnconfigure(1, weight=1)
-        notice_panel.columnconfigure(2, minsize=self._px(238))
+        notice_panel.columnconfigure(2, minsize=self._px(180))
         notice_panel.rowconfigure(0, weight=1)
         notice_panel.pack(fill="x", expand=True)
         self.notice_panel = notice_panel
@@ -1154,7 +1154,7 @@ class FileSelectorApp:
                 "none": "設定なし",
                 "paperless": "ペーパーレス会議設定",
                 "mail": "メールデータ整理設定",
-                "asp": "工事情報共有システム設定",
+                "asp": "工事書類検査設定",
                 "custom1": "カスタム1",
                 "custom2": "カスタム2",
             }
@@ -1185,7 +1185,7 @@ class FileSelectorApp:
             "設定なし": "none",
             "ペーパーレス会議設定": "paperless",
             "メールデータ整理設定": "mail",
-            "工事情報共有システム設定": "asp",
+            "工事書類検査設定": "asp",
             "カスタム1": "custom1",
             "カスタム2": "custom2",
             "No preset": "none",
@@ -1283,12 +1283,12 @@ class FileSelectorApp:
         translations = {
             "en": {
                 "window_title": "kojiPDF - Built with Python by Code4Construct",
-                "title": "kojiPDF v2.2.0",
+                "title": "kojiPDF v2.3.0",
                 "subtitle": "Select a folder and output PDF file, then create a structured inspection PDF.",
                 "notice": (
-                    "- Merge PDFs and create bookmarks from file and folder names\n"
-                    "- Convert Office files, add page numbers with adjustable opacity, and resize pages\n"
-                    "Uses: inspection records and paperless meeting materials.\n"
+                    "- Useful for creating paperless meeting materials with PDFs, organizing email data, and preparing construction document inspections (ASP support)\n"
+                    "- Convert all PDFs, Office files, emails, images, text files, and ZIP files under the selected folder into one PDF, with folder hierarchy, email attachments, and ZIP contents organized as multi-level bookmarks\n"
+                    "- Supports output adjustments such as page numbers, page resizing, PDF repair, and compression\n"
                     "Note: This app uses Python modules licensed under AGPL-3.0.\n"
                     "Commercial use is allowed. If modified, redistributed, or provided over a network, "
                     "the source code must be published under AGPL-3.0.\n"
@@ -1382,13 +1382,13 @@ class FileSelectorApp:
             },
             "ja": {
                 "window_title": "kojiPDF - Built with Python by Code4Construct",
-                "title": "kojiPDF v2.2.0",
+                "title": "kojiPDF v2.3.0",
                 "subtitle": "フォルダとPDF保存先を選択し、工事検査用PDFファイルを作成します。",
                 "notice": (
-                    "・選択フォルダ内のPDFを結合し、ファイル名をしおり、フォルダ名を親しおりとして追加した構造化PDFを作成\n"
-                    "・Microsoft OfficeファイルのPDF自動変換、不透明度を設定できるページ番号付与、ページサイズ変更などに対応\n"
-                    "用途：工事検査資料の整理、情報共有システムの電子データ確認、"
-                    "ペーパーレス会議資料の作成\n"
+                    "・PDFを活用したペーパーレス会議資料の作成、メールデータ整理、工事書類検査（ASP対応）に役立ちます。\n"
+                    "・選択フォルダ配下のすべてのPDF、Office、メール、画像、テキスト、ZIPファイルをPDF化して1つのファイルに結合し、\n"
+                    "　フォルダ階層・メール添付・ZIP内ファイルを複階層しおりとして整理したPDFを作成します。\n"
+                    "・ページ番号、ページサイズ変更、PDF修復・圧縮などの出力調整に対応しています。\n"
                     "注意：本アプリは、使用しているPythonモジュールによりAGPL-3.0 Licenseが適用されます。\n"
                     "商用利用は可能ですが、改変・再配布・ネットワーク経由で提供する場合はソースコード公開が必要です。\n"
                     "この義務を遵守しない場合、AGPL-3.0に基づく利用許諾を受けられません。"
@@ -1498,7 +1498,7 @@ class FileSelectorApp:
                 self._sync_dynamic_wraplengths()
                 return
         else:
-            available_width = event.width - self._px(328)
+            available_width = event.width - self._px(260)
 
         wraplength = max(self._px(300), available_width)
         self.notice_label.configure(wraplength=wraplength)
@@ -1511,7 +1511,7 @@ class FileSelectorApp:
 
         root_horizontal_padding = self._px(28)
         notice_panel_padding_and_icon = self._px(94)
-        notice_panel_preset_width = self._px(250)
+        notice_panel_preset_width = self._px(190)
         license_panel_padding = self._px(180)
         path_controls_width = self._px(250)
 

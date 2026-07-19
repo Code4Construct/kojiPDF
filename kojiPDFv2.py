@@ -344,7 +344,13 @@ def show_pdf_check_report(title, report, actions=None):
     return selected["action"]
 
 
-def run_fast_preflight_check(source_folder_path, output_file_path, confirm_problems=False, issue_report=None):
+def run_fast_preflight_check(
+    source_folder_path,
+    output_file_path,
+    confirm_problems=False,
+    repair_warnings=False,
+    issue_report=None,
+):
     title = "高速な結合前チェック結果"
     print("Fast preflight PDF check started.")
     results = pdf_validation.check_folder_pdfs(source_folder_path, detailed=False)
@@ -365,7 +371,7 @@ def run_fast_preflight_check(source_folder_path, output_file_path, confirm_probl
         )
         raise RuntimeError("高速な結合前チェックでエラーが見つかったため処理を終了しました。")
 
-    if repairable:
+    if repairable and repair_warnings:
         repair_results, error_files_dir = pdf_validation.repair_problem_source_pdfs(
             repairable,
             source_folder_path,
@@ -386,13 +392,16 @@ def run_fast_preflight_check(source_folder_path, output_file_path, confirm_probl
         combined_report = report + "\n\n" + repair_report
         if post_report:
             combined_report += "\n\n" + post_report
-        if confirm_problems or failed:
+        if confirm_problems:
             show_pdf_check_report("高速チェック・修復結果", combined_report)
         if failed:
-            raise RuntimeError("高速チェックで自動修復できないPDFがありました。手動対応してください。")
+            add_issue(issue_report, "Source PDF repair failed", repair_report)
+            print("Some source PDF warnings could not be repaired. Continuing with the original PDFs.")
         if repaired:
             print("Fast preflight PDF warnings were repaired. Continuing.")
         return
+    if repairable:
+        print("Source PDF warnings were found, but source repair is enabled only in compress mode.")
 
     action = show_pdf_check_report(
         title,
@@ -409,7 +418,13 @@ def run_fast_preflight_check(source_folder_path, output_file_path, confirm_probl
     print("Continuing after fast preflight PDF check problems by user choice.")
 
 
-def run_detail_preflight_repair(source_folder_path, output_file_path, confirm_steps=False, issue_report=None):
+def run_detail_preflight_repair(
+    source_folder_path,
+    output_file_path,
+    confirm_steps=False,
+    repair_warnings=False,
+    issue_report=None,
+):
     title = "事前詳細チェック結果"
     print("Detailed preflight PDF check started.")
     results = pdf_validation.check_folder_pdfs(source_folder_path, detailed=True)
@@ -432,7 +447,7 @@ def run_detail_preflight_repair(source_folder_path, output_file_path, confirm_st
         show_pdf_check_report("事前詳細チェック結果", report + "\n\n" + manual_report)
         raise RuntimeError("詳細チェックで手動対応が必要なPDFが見つかりました。")
 
-    if repairable:
+    if repairable and repair_warnings:
         repair_results, error_files_dir = pdf_validation.repair_problem_source_pdfs(
             repairable,
             source_folder_path,
@@ -453,15 +468,20 @@ def run_detail_preflight_repair(source_folder_path, output_file_path, confirm_st
         combined_report = report + "\n\n" + repair_report
         if post_report:
             combined_report += "\n\n" + post_report
-        if confirm_steps or failed:
+        if confirm_steps:
             show_pdf_check_report("事前詳細チェック・修復結果", combined_report)
         if failed:
-            raise RuntimeError("自動修復できないPDFがありました。手動対応してください。")
+            add_issue(issue_report, "Source PDF repair failed", repair_report)
+            print("Some source PDF warnings could not be repaired. Continuing with the original PDFs.")
         if repaired:
             raise SourcePdfRepairedRetry(
                 "Source PDFs were repaired. Rebuilding merged PDF.",
                 source_folder_path,
             )
+    if repairable:
+        print("Source PDF warnings were found, but source repair is enabled only in compress mode.")
+        if confirm_steps:
+            show_pdf_check_report(title, report)
 
 
 def save_final_pdf(
@@ -586,11 +606,13 @@ def create_pdf(
             issue_report=issue_report,
         )
 
+    repair_source_warnings = is_smaller_file_save_mode(save_options)
     if preflight_detail_repair:
         run_detail_preflight_repair(
             folder_path,
             output_file_path,
             confirm_steps=preflight_confirm,
+            repair_warnings=repair_source_warnings,
             issue_report=issue_report,
         )
     else:
@@ -598,11 +620,11 @@ def create_pdf(
             folder_path,
             output_file_path,
             confirm_problems=preflight_confirm,
+            repair_warnings=repair_source_warnings,
             issue_report=issue_report,
         )
 
     print("フォルダー構造を解析しています。")
-    optimize_pdfs_before_merge(folder_path, save_options, issue_report=issue_report)
     df, max_levels = tree_data.build_tree_data(folder_path)
 
     if asper_format:
