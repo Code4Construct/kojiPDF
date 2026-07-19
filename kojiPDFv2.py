@@ -154,6 +154,85 @@ def save_pdf_collecting_mupdf_warnings(pdf_document, output_file_path, save_opti
         TOOLS.mupdf_display_warnings(True)
 
 
+def is_smaller_file_save_mode(save_options):
+    return int(save_options.get("garbage", 0)) >= 4 and bool(save_options.get("deflate"))
+
+
+def is_safe_generated_temp_folder(folder_path):
+    return os.path.basename(os.path.abspath(folder_path)).lower() == "temp_folder"
+
+
+def optimize_single_pdf_before_merge(pdf_path):
+    pdf_path = os.path.abspath(pdf_path)
+    output_dir = os.path.dirname(pdf_path)
+    candidate_path = None
+    original_size = os.path.getsize(pdf_path)
+
+    try:
+        with tempfile.NamedTemporaryFile(
+            prefix="kojiPDF_premerge_",
+            suffix=".pdf",
+            dir=output_dir,
+            delete=False,
+        ) as candidate_file:
+            candidate_path = candidate_file.name
+
+        doc = fitz_open(pdf_path)
+        try:
+            doc.save(candidate_path, garbage=4, deflate=True)
+        finally:
+            doc.close()
+
+        optimized_size = os.path.getsize(candidate_path)
+        if optimized_size > 0:
+            os.replace(candidate_path, pdf_path)
+            candidate_path = None
+            return original_size, optimized_size
+        raise RuntimeError("optimized PDF is empty")
+    finally:
+        if candidate_path and os.path.exists(candidate_path):
+            os.remove(candidate_path)
+
+
+def optimize_pdfs_before_merge(folder_path, save_options, issue_report=None):
+    if not is_smaller_file_save_mode(save_options):
+        return
+
+    if not is_safe_generated_temp_folder(folder_path):
+        print("結合前PDF個別圧縮をスキップしました。元フォルダのPDFは直接書き換えません。")
+        return
+
+    pdf_paths = sorted(
+        os.path.join(root, file)
+        for root, _dirs, files in os.walk(folder_path)
+        for file in files
+        if file.lower().endswith(".pdf")
+    )
+    if not pdf_paths:
+        return
+
+    print(f"圧縮重視: 結合前にPDFを個別圧縮しています。対象 {len(pdf_paths)} 件")
+    success_count = 0
+    failed_count = 0
+    saved_total = 0
+    for index, pdf_path in enumerate(pdf_paths, start=1):
+        print(f"結合前PDF個別圧縮 {index}/{len(pdf_paths)}: {pdf_path}")
+        try:
+            original_size, optimized_size = optimize_single_pdf_before_merge(pdf_path)
+            success_count += 1
+            saved_total += max(0, original_size - optimized_size)
+            print(f"個別圧縮完了: {original_size:,} -> {optimized_size:,} bytes")
+        except Exception as exc:
+            failed_count += 1
+            message = f"結合前PDF個別圧縮失敗: {pdf_path} -> {exc}. 元PDFのまま結合します。"
+            print(message)
+            add_issue(issue_report, "Pre-merge PDF compression warning", message)
+
+    print(
+        f"結合前PDF個別圧縮が完了しました。成功 {success_count} 件 / 失敗 {failed_count} 件 / 削減 {saved_total:,} bytes"
+    )
+
+
 def choose_save_warning_action(warnings):
     actions = [
         ("repair", "修復: garbage4", "#1976D2"),
@@ -448,6 +527,7 @@ def save_final_pdf(
             clean_save_options = dict(save_options)
             clean_save_options["garbage"] = max(int(clean_save_options.get("garbage", 0)), 4)
             clean_save_options["clean"] = True
+            print("最終PDFを修復保存しています。大きいPDFでは数分かかることがあります。")
             clean_warnings = save_pdf_collecting_mupdf_warnings(
                 pdf_document,
                 candidate_path,
@@ -483,6 +563,7 @@ def create_pdf(
     page_number_options,
     xratio,
     yratio,
+    bookmark_view_mode,
     base_view_width_mm,
     base_view_height_mm,
     expand_all,
@@ -521,6 +602,7 @@ def create_pdf(
         )
 
     print("フォルダー構造を解析しています。")
+    optimize_pdfs_before_merge(folder_path, save_options, issue_report=issue_report)
     df, max_levels = tree_data.build_tree_data(folder_path)
 
     if asper_format:
@@ -583,6 +665,7 @@ def create_pdf(
         toc_collapse_level,
         base_view_width_mm,
         base_view_height_mm,
+        bookmark_view_mode=bookmark_view_mode,
         apply_asper_bookmark_colors=asper_format,
     )
 
@@ -590,7 +673,10 @@ def create_pdf(
         print("しおり名の末尾にある.pdfを削除しています。")
         output_pdf = bookmark_cleanup.remove_pdf_extension_from_bookmarks(output_pdf, collapse=toc_collapse_level)
 
+    output_pdf = bookmark_links.apply_bookmark_view_mode(output_pdf, bookmark_view_mode)
+
     print("最終PDFを保存しています。")
+    print("最終PDFを一時ファイルに保存中です。大きいPDFでは数分かかることがあります。")
     ensure_output_file_writable(output_file_path)
     output_pdf.xref_set_key(output_pdf.pdf_catalog(), "PageMode", "/UseOutlines")
     try:
@@ -716,6 +802,7 @@ def main():
         xratio,
         yratio,
         scale_enabled,
+        bookmark_view_mode,
         base_view_width_mm,
         base_view_height_mm,
         expand_all,
@@ -752,6 +839,7 @@ def main():
         page_number_options,
         xratio,
         yratio,
+        bookmark_view_mode,
         base_view_width_mm,
         base_view_height_mm,
         expand_all,

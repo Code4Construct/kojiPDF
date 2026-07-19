@@ -3,6 +3,7 @@ import json
 import os
 import queue
 import sys
+import time
 from datetime import datetime
 
 
@@ -86,6 +87,20 @@ PAGE_NUMBER_COLOR_VALUES = {
     "blue": (0, 0, 1),
     "black": (0, 0, 0),
 }
+BOOKMARK_VIEW_MODE_LABELS = {
+    "ja": {
+        "adjust": "補正値で調整",
+        "fit_width": "幅に合わせる",
+        "fit_height": "高さに合わせる",
+        "fit_page": "ページ全体",
+    },
+    "en": {
+        "adjust": "Adjusted position",
+        "fit_width": "Fit width",
+        "fit_height": "Fit height",
+        "fit_page": "Fit page",
+    },
+}
 PRESET_CODES = ("none", "paperless", "mail", "asp", "custom1", "custom2")
 BUILT_IN_PRESET_CODES = ("paperless", "mail", "asp")
 DEFAULT_UI_SETTINGS = {
@@ -112,7 +127,8 @@ DEFAULT_UI_SETTINGS = {
     "page_font": "helv",
     "page_color": "red",
     "page_opacity": 0.20,
-    "scale_mode": "relative",
+    "bookmark_view_mode": "fit_page",
+    "scale_mode": "absolute",
     "scale_x": 1.00,
     "scale_y": 1.00,
     "base_view_width": 330,
@@ -138,9 +154,7 @@ BUILT_IN_PRESETS = {
         "page_font": "helv",
         "page_color": "red",
         "page_opacity": 0.20,
-        "scale_mode": "relative",
-        "scale_x": 0.80,
-        "scale_y": 0.80,
+        "scale_mode": "absolute",
     },
     "mail": {
         **DEFAULT_UI_SETTINGS,
@@ -162,9 +176,7 @@ BUILT_IN_PRESETS = {
         "page_font": "helv",
         "page_color": "red",
         "page_opacity": 0.20,
-        "scale_mode": "relative",
-        "scale_x": 0.80,
-        "scale_y": 0.80,
+        "scale_mode": "absolute",
     },
     "asp": {
         **DEFAULT_UI_SETTINGS,
@@ -185,9 +197,7 @@ BUILT_IN_PRESETS = {
         "page_font": "helv",
         "page_color": "red",
         "page_opacity": 0.20,
-        "scale_mode": "relative",
-        "scale_x": 0.80,
-        "scale_y": 0.80,
+        "scale_mode": "absolute",
         "asper_format": True,
     },
 }
@@ -407,6 +417,9 @@ class FileSelectorApp:
         self.retry_requested = False
         self._progress_queue = queue.Queue()
         self._progress_poll_after_id = None
+        self._progress_heartbeat_after_id = None
+        self._progress_started_at = None
+        self._progress_last_message_at = None
         self.language = "ja"
         self.custom_presets = self._load_custom_presets()
         self.window = tb.Window(themename="flatly")
@@ -427,7 +440,7 @@ class FileSelectorApp:
 
         self._build_window()
         self._apply_language()
-        self.toggle_scale_mode()
+        self.toggle_bookmark_view_mode()
         self.toggle_collapse_spinbox()
         self.toggle_page_number_options()
         self.toggle_office_options()
@@ -848,10 +861,24 @@ class FileSelectorApp:
 
     def _build_scale_options(self, parent=None):
         frame = self._band(2, "scale_section_label", parent=parent, column=0, padx=(0, 4))
-        frame.columnconfigure(0, minsize=self._px(158))
-        frame.columnconfigure(1, weight=1)
-        frame.columnconfigure(3, weight=1)
-        self.scale_mode_var = tk.StringVar(value="relative")
+        self.scale_section_label.master.grid_configure(columnspan=1, pady=0)
+        frame.columnconfigure(0, minsize=self._px(144), weight=0)
+        frame.columnconfigure(1, minsize=self._px(72), weight=0)
+        frame.columnconfigure(2, minsize=self._px(104), weight=0)
+        frame.columnconfigure(3, minsize=self._px(30), weight=0)
+        frame.columnconfigure(4, minsize=self._px(76), weight=0)
+        frame.columnconfigure(5, minsize=self._px(30), weight=0)
+        frame.columnconfigure(6, weight=1)
+        self.bookmark_view_mode_var = tk.StringVar(value=self._bookmark_view_mode_labels()["fit_page"])
+        self.bookmark_view_mode_label = tb.Label(frame, style="Field.TLabel")
+        self.bookmark_view_mode_combo = self._make_combobox(
+            frame,
+            textvariable=self.bookmark_view_mode_var,
+            values=self._bookmark_view_mode_display_values(),
+            width=12,
+        )
+        self.bookmark_view_mode_combo.bind("<<ComboboxSelected>>", lambda _event: self.toggle_bookmark_view_mode(), add="+")
+        self.scale_mode_var = tk.StringVar(value="absolute")
         self.relative_scale_radio = tb.Radiobutton(
             frame,
             variable=self.scale_mode_var,
@@ -874,16 +901,14 @@ class FileSelectorApp:
         self.scale_y_spinbox = self._make_spinbox(frame, 0.10, 2.00, 0.05, 1.00, integer=False)
         self.base_view_width_spinbox = self._make_spinbox(frame, 100, 1000, 10, 330, integer=True)
         self.base_view_height_spinbox = self._make_spinbox(frame, 100, 1000, 10, 210, integer=True)
-        self.relative_scale_radio.grid(row=0, column=1, sticky="w", padx=self._pad(28, 0), pady=self._pad(0, 8))
-        self.absolute_scale_radio.grid(row=0, column=2, sticky="w", padx=self._pad(18, 0), pady=self._pad(0, 8))
-        self.horizontal_scale_label.grid(row=1, column=0, sticky="e", padx=self._pad(0, 8), pady=self._px(2))
-        self.scale_x_spinbox.grid(row=1, column=1, sticky="w", pady=self._px(2))
-        self.vertical_scale_label.grid(row=1, column=2, sticky="e", padx=self._pad(12, 8), pady=self._px(2))
-        self.scale_y_spinbox.grid(row=1, column=3, sticky="w", pady=self._px(2))
-        self.base_view_width_label.grid(row=1, column=0, sticky="e", padx=self._pad(0, 8), pady=self._px(2))
-        self.base_view_width_spinbox.grid(row=1, column=1, sticky="w", pady=self._px(2))
-        self.base_view_height_label.grid(row=1, column=2, sticky="e", padx=self._pad(12, 8), pady=self._px(2))
-        self.base_view_height_spinbox.grid(row=1, column=3, sticky="w", pady=self._px(2))
+        self.base_view_width_spinbox.configure(width=6)
+        self.base_view_height_spinbox.configure(width=6)
+        self.bookmark_view_mode_label.grid(row=0, column=1, sticky="e", padx=self._pad(0, 4), pady=self._px(2))
+        self.bookmark_view_mode_combo.grid(row=0, column=2, sticky="w", pady=self._px(2))
+        self.base_view_width_label.grid(row=0, column=3, sticky="e", padx=self._pad(4, 4), pady=self._px(2))
+        self.base_view_width_spinbox.grid(row=0, column=4, sticky="w", pady=self._px(2))
+        self.base_view_height_label.grid(row=0, column=5, sticky="e", padx=self._pad(4, 4), pady=self._px(2))
+        self.base_view_height_spinbox.grid(row=0, column=6, sticky="w", pady=self._px(2))
 
     def _build_bookmark_options(self, parent=None):
         frame = self._band(0, "bookmark_section_label", parent=parent, column=1, padx=(4, 0))
@@ -1092,6 +1117,37 @@ class FileSelectorApp:
         }
         return legacy_labels.get(selected, "red")
 
+    BOOKMARK_VIEW_MODE_CODES = ("fit_page", "fit_width", "fit_height", "adjust")
+
+    def _bookmark_view_mode_labels(self):
+        return BOOKMARK_VIEW_MODE_LABELS.get(self.language, BOOKMARK_VIEW_MODE_LABELS["en"])
+
+    def _bookmark_view_mode_display_values(self):
+        labels = self._bookmark_view_mode_labels()
+        return [labels[code] for code in self.BOOKMARK_VIEW_MODE_CODES]
+
+    def _set_bookmark_view_mode_code(self, code):
+        labels = self._bookmark_view_mode_labels()
+        self.bookmark_view_mode_var.set(labels.get(code, labels["fit_page"]))
+
+    def _current_bookmark_view_mode_code(self):
+        selected = self.bookmark_view_mode_var.get()
+        labels = self._bookmark_view_mode_labels()
+        for code, label in labels.items():
+            if selected == label:
+                return code
+        legacy_labels = {
+            "補正値で調整": "adjust",
+            "幅に合わせる": "fit_width",
+            "高さに合わせる": "fit_height",
+            "ページ全体": "fit_page",
+            "Adjusted position": "adjust",
+            "Fit width": "fit_width",
+            "Fit height": "fit_height",
+            "Fit page": "fit_page",
+        }
+        return legacy_labels.get(selected, "adjust")
+
     def _preset_labels(self):
         if self.language == "ja":
             return {
@@ -1250,6 +1306,7 @@ class FileSelectorApp:
                 "asp_options": "Construction info-sharing (ASP)",
                 "progress_title": "Progress",
                 "progress_started": "Starting PDF creation...\n",
+                "progress_heartbeat": "Working... elapsed {elapsed}. Large final saves can take several minutes.",
                 "progress_done": "Done.",
                 "progress_failed": "Stopped because an error occurred.",
                 "retry_hint": "Close the file or fix the issue, then press Run again.",
@@ -1304,10 +1361,11 @@ class FileSelectorApp:
                 "preset_error_message": "Could not save preset settings.\n{error}",
                 "relative_scale": "Relative",
                 "absolute_scale": "Absolute",
+                "bookmark_view_mode": "View mode",
                 "horizontal_scale": "Width corr.",
                 "vertical_scale": "Height corr.",
-                "base_view_width": "Base width",
-                "base_view_height": "Base height",
+                "base_view_width": "Width",
+                "base_view_height": "Height",
                 "expand_all": "Expand all",
                 "bookmark_level": "Open level",
                 "folder_dialog": "Select folder",
@@ -1347,6 +1405,7 @@ class FileSelectorApp:
                 "asp_options": "工事情報共有システム（ASP）",
                 "progress_title": "作成状況",
                 "progress_started": "PDF作成を開始します...\n",
+                "progress_heartbeat": "処理中です... 経過 {elapsed}。大きいPDFの最終保存は数分かかることがあります。",
                 "progress_done": "完了しました。",
                 "progress_failed": "エラーにより停止しました。",
                 "retry_hint": "ファイルを閉じるなど原因を解消してから、もう一度作成ボタンを押してください。",
@@ -1401,10 +1460,11 @@ class FileSelectorApp:
                 "preset_error_message": "プリセット設定を保存できませんでした。\n{error}",
                 "relative_scale": "相対補正",
                 "absolute_scale": "絶対補正",
+                "bookmark_view_mode": "表示モード",
                 "horizontal_scale": "表示幅補正",
                 "vertical_scale": "表示高さ補正",
-                "base_view_width": "基準表示幅",
-                "base_view_height": "基準表示高さ",
+                "base_view_width": "幅",
+                "base_view_height": "高さ",
                 "expand_all": "すべてのしおりを展開",
                 "bookmark_level": "しおり展開階層",
                 "folder_dialog": "フォルダを選択してください",
@@ -1536,6 +1596,10 @@ class FileSelectorApp:
         self.page_color_combo.configure(values=self._page_number_color_display_values())
         self._set_page_number_color_code(current_page_color)
         self.page_opacity_label.configure(text=self._text("page_opacity"))
+        current_view_mode = self._current_bookmark_view_mode_code()
+        self.bookmark_view_mode_label.configure(text=self._text("bookmark_view_mode"))
+        self.bookmark_view_mode_combo.configure(values=self._bookmark_view_mode_display_values())
+        self._set_bookmark_view_mode_code(current_view_mode)
         self.relative_scale_radio.configure(text=self._text("relative_scale"))
         self.absolute_scale_radio.configure(text=self._text("absolute_scale"))
         self.horizontal_scale_label.configure(text=self._text("horizontal_scale"))
@@ -1553,6 +1617,8 @@ class FileSelectorApp:
     def _refresh_progress_language(self):
         if self._widget_exists("progress_title_label"):
             self.progress_title_label.configure(text=self._text("progress_title"))
+        if self._widget_exists("progress_elapsed_label") and hasattr(self, "progress_elapsed_text"):
+            self.progress_elapsed_text.set(self._progress_heartbeat_text())
 
         if not hasattr(self, "progress_steps") or not hasattr(self, "progress_step_labels"):
             return
@@ -1646,8 +1712,10 @@ class FileSelectorApp:
         self.options_group.rowconfigure(0, weight=1)
         self.options_group.columnconfigure(0, weight=1)
         self.options_group.columnconfigure(1, weight=1)
-        self.progress_panel.rowconfigure(4, weight=1)
+        self.progress_panel.rowconfigure(5, weight=1)
         self.progress_panel.columnconfigure(0, weight=1)
+        self._progress_started_at = time.monotonic()
+        self._progress_last_message_at = self._progress_started_at
 
         self.progress_title_label = tb.Label(self.progress_panel, style="Section.TLabel")
         self.progress_title_label.grid(row=0, column=0, sticky="w", pady=self._pad(0, 8))
@@ -1670,8 +1738,19 @@ class FileSelectorApp:
         )
         self.progress_current_label.grid(row=2, column=0, sticky="ew", pady=self._pad(0, 10))
 
+        self.progress_elapsed_text = tk.StringVar(value=self._progress_heartbeat_text())
+        self.progress_elapsed_label = tk.Label(
+            self.progress_panel,
+            textvariable=self.progress_elapsed_text,
+            bg=BAND_BG,
+            fg=MUTED_TEXT_COLOR,
+            anchor="w",
+            font=("Yu Gothic UI", 9),
+        )
+        self.progress_elapsed_label.grid(row=3, column=0, sticky="ew", pady=self._pad(0, 8))
+
         self.progress_step_frame = tk.Frame(self.progress_panel, bg=BAND_BG)
-        self.progress_step_frame.grid(row=3, column=0, sticky="ew", pady=self._pad(0, 10))
+        self.progress_step_frame.grid(row=4, column=0, sticky="ew", pady=self._pad(0, 10))
         self.progress_steps = self._progress_steps()
         self.progress_step_labels = []
         for index, step in enumerate(self.progress_steps):
@@ -1702,10 +1781,11 @@ class FileSelectorApp:
             borderwidth=0,
             font=("Yu Gothic UI", 10),
         )
-        self.progress_text.grid(row=4, column=0, sticky="nsew", pady=self._pad(0, 6))
+        self.progress_text.grid(row=5, column=0, sticky="nsew", pady=self._pad(0, 6))
         self.progress_text.configure(state="disabled")
         self.append_progress(self._text("progress_started"))
         self._start_progress_queue_poll()
+        self._start_progress_heartbeat()
         self.window.update_idletasks()
         self._fit_window_to_screen()
 
@@ -1747,6 +1827,7 @@ class FileSelectorApp:
         if not message or not hasattr(self, "progress_text"):
             return
         try:
+            self._progress_last_message_at = time.monotonic()
             self._update_progress_from_message(message)
             self.progress_text.configure(state="normal")
             self.progress_text.insert("end", message)
@@ -1756,6 +1837,42 @@ class FileSelectorApp:
             self.window.update()
         except tk.TclError:
             pass
+
+    def _format_elapsed_time(self, seconds):
+        seconds = max(0, int(seconds))
+        minutes, seconds = divmod(seconds, 60)
+        hours, minutes = divmod(minutes, 60)
+        if hours:
+            return f"{hours}:{minutes:02d}:{seconds:02d}"
+        return f"{minutes:02d}:{seconds:02d}"
+
+    def _progress_heartbeat_text(self):
+        started_at = self._progress_started_at or time.monotonic()
+        elapsed = self._format_elapsed_time(time.monotonic() - started_at)
+        return self._text("progress_heartbeat").format(elapsed=elapsed)
+
+    def _start_progress_heartbeat(self):
+        if self._progress_heartbeat_after_id is None:
+            self._update_progress_heartbeat()
+
+    def _update_progress_heartbeat(self):
+        self._progress_heartbeat_after_id = None
+        if not hasattr(self, "progress_elapsed_text"):
+            return
+        try:
+            self.progress_elapsed_text.set(self._progress_heartbeat_text())
+            self._progress_heartbeat_after_id = self.window.after(1000, self._update_progress_heartbeat)
+        except tk.TclError:
+            pass
+
+    def _stop_progress_heartbeat(self):
+        if self._progress_heartbeat_after_id is None:
+            return
+        try:
+            self.window.after_cancel(self._progress_heartbeat_after_id)
+        except tk.TclError:
+            pass
+        self._progress_heartbeat_after_id = None
 
     def queue_progress(self, message):
         if message:
@@ -1785,6 +1902,7 @@ class FileSelectorApp:
         if not hasattr(self, "progress_text"):
             return
         try:
+            self._stop_progress_heartbeat()
             self.progress_bar.stop()
             self.options_group.configure(cursor="")
             if success:
@@ -1914,7 +2032,8 @@ class FileSelectorApp:
             pass
 
     def toggle_scale_mode(self):
-        relative_mode = self.scale_mode_var.get() == "relative"
+        if self._current_bookmark_view_mode_code() != "adjust":
+            return
         relative_widgets = (
             self.horizontal_scale_label,
             self.scale_x_spinbox,
@@ -1928,9 +2047,32 @@ class FileSelectorApp:
             self.base_view_height_spinbox,
         )
         for widget in relative_widgets:
-            widget.grid() if relative_mode else widget.grid_remove()
+            widget.grid_remove()
         for widget in absolute_widgets:
-            widget.grid_remove() if relative_mode else widget.grid()
+            widget.grid()
+
+    def toggle_bookmark_view_mode(self):
+        adjust_mode = self._current_bookmark_view_mode_code() == "adjust"
+        state = "normal" if adjust_mode else "disabled"
+        for widget in (
+            self.base_view_width_spinbox,
+            self.base_view_height_spinbox,
+        ):
+            widget.configure(state=state)
+        if adjust_mode:
+            self.toggle_scale_mode()
+        else:
+            for widget in (
+                self.horizontal_scale_label,
+                self.scale_x_spinbox,
+                self.vertical_scale_label,
+                self.scale_y_spinbox,
+                self.base_view_width_label,
+                self.base_view_width_spinbox,
+                self.base_view_height_label,
+                self.base_view_height_spinbox,
+            ):
+                widget.grid_remove()
 
     def toggle_collapse_spinbox(self):
         state = "disabled" if self.expand_all_var.get() else "normal"
@@ -1973,7 +2115,7 @@ class FileSelectorApp:
         self.confirm_temp_folder_delete_checkbox.configure(state=office_state)
         self.toggle_mail_options()
         self.toggle_page_number_options()
-        self.toggle_scale_mode()
+        self.toggle_bookmark_view_mode()
         self.toggle_collapse_spinbox()
 
     def current_ui_settings(self):
@@ -2001,9 +2143,10 @@ class FileSelectorApp:
             "page_font": self._current_page_number_font_code(),
             "page_color": self._current_page_number_color_code(),
             "page_opacity": self._spinbox_value(self.page_opacity_spinbox),
-            "scale_mode": self.scale_mode_var.get(),
-            "scale_x": self._spinbox_value(self.scale_x_spinbox),
-            "scale_y": self._spinbox_value(self.scale_y_spinbox),
+            "bookmark_view_mode": self._current_bookmark_view_mode_code(),
+            "scale_mode": "absolute",
+            "scale_x": 1.0,
+            "scale_y": 1.0,
             "base_view_width": self._spinbox_value(self.base_view_width_spinbox),
             "base_view_height": self._spinbox_value(self.base_view_height_spinbox),
             "asper_format": self.asper_format_var.get(),
@@ -2034,9 +2177,10 @@ class FileSelectorApp:
         self._set_page_number_font_code(values["page_font"])
         self._set_page_number_color_code(values["page_color"])
         self._set_spinbox_value(self.page_opacity_spinbox, values["page_opacity"])
-        self.scale_mode_var.set(values["scale_mode"] if values["scale_mode"] in {"relative", "absolute"} else "relative")
-        self._set_spinbox_value(self.scale_x_spinbox, values["scale_x"])
-        self._set_spinbox_value(self.scale_y_spinbox, values["scale_y"])
+        self._set_bookmark_view_mode_code(values["bookmark_view_mode"])
+        self.scale_mode_var.set("absolute")
+        self._set_spinbox_value(self.scale_x_spinbox, 1.0)
+        self._set_spinbox_value(self.scale_y_spinbox, 1.0)
         self._set_spinbox_value(self.base_view_width_spinbox, values["base_view_width"])
         self._set_spinbox_value(self.base_view_height_spinbox, values["base_view_height"])
         self.asper_format_var.set(bool(values["asper_format"]))
@@ -2219,30 +2363,26 @@ class FileSelectorApp:
 
     @property
     def scale_x(self):
-        if self.scale_mode_var.get() == "absolute":
-            return 1.0
-        return self._spinbox_value(self.scale_x_spinbox)
+        return 1.0
 
     @property
     def scale_y(self):
-        if self.scale_mode_var.get() == "absolute":
-            return 1.0
-        return self._spinbox_value(self.scale_y_spinbox)
+        return 1.0
 
     @property
     def scale_enabled(self):
         return True
 
     @property
+    def bookmark_view_mode(self):
+        return self._current_bookmark_view_mode_code()
+
+    @property
     def base_view_width_mm(self):
-        if self.scale_mode_var.get() == "relative":
-            return 330
         return self._spinbox_value(self.base_view_width_spinbox)
 
     @property
     def base_view_height_mm(self):
-        if self.scale_mode_var.get() == "relative":
-            return 210
         return self._spinbox_value(self.base_view_height_spinbox)
 
     @property
@@ -2282,6 +2422,7 @@ def select_folder_and_file():
         selector.scale_x,
         selector.scale_y,
         selector.scale_enabled,
+        selector.bookmark_view_mode,
         selector.base_view_width_mm,
         selector.base_view_height_mm,
         selector.expand_all,

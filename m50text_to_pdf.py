@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import codecs
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -90,7 +91,7 @@ def read_text_file(text_path: Path) -> str:
     for encoding in TEXT_ENCODING_CANDIDATES:
         try:
             decoded = data.decode(encoding)
-        except UnicodeDecodeError:
+        except UnicodeError:
             continue
         score = mojibake_score(decoded)
         if score < best_score:
@@ -102,6 +103,11 @@ def read_text_file(text_path: Path) -> str:
     if best_text:
         return best_text
     return data.decode("utf-8", errors="replace")
+
+
+def decode_text_sample(data: bytes, encoding: str) -> str:
+    decoder = codecs.getincrementaldecoder(encoding)()
+    return decoder.decode(data, final=False)
 
 
 def is_probably_text_file(path: Path) -> bool:
@@ -124,8 +130,8 @@ def is_probably_text_file(path: Path) -> bool:
     best_length = 0
     for encoding in TEXT_ENCODING_CANDIDATES:
         try:
-            decoded = data.decode(encoding)
-        except UnicodeDecodeError:
+            decoded = decode_text_sample(data, encoding)
+        except UnicodeError:
             continue
         best_score = min(best_score, mojibake_score(decoded))
         best_length = max(best_length, len(decoded))
