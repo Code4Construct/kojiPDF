@@ -1,4 +1,5 @@
 import ctypes
+import json
 import os
 import queue
 import sys
@@ -85,6 +86,116 @@ PAGE_NUMBER_COLOR_VALUES = {
     "blue": (0, 0, 1),
     "black": (0, 0, 0),
 }
+PRESET_CODES = ("none", "paperless", "mail", "asp", "custom1", "custom2")
+BUILT_IN_PRESET_CODES = ("paperless", "mail", "asp")
+DEFAULT_UI_SETTINGS = {
+    "convert_office": False,
+    "convert_mail": False,
+    "eml_encoding": "auto",
+    "ppt_slide_bookmarks": False,
+    "confirm_temp_folder_delete": False,
+    "resize_pdf": False,
+    "resize_size": "A4",
+    "preflight_detail_repair": False,
+    "preflight_confirm": False,
+    "save_mode": "balanced",
+    "add_bookmark_page_number": False,
+    "add_page": False,
+    "expand_all": False,
+    "collapse_level": 1,
+    "keep_pdf_extension": False,
+    "add_pdf_page_numbers": False,
+    "page_start_number": 1,
+    "page_font_size": 30,
+    "page_margin_right": 10,
+    "page_margin_bottom": 10,
+    "page_font": "helv",
+    "page_color": "red",
+    "page_opacity": 0.20,
+    "scale_mode": "relative",
+    "scale_x": 1.00,
+    "scale_y": 1.00,
+    "base_view_width": 330,
+    "base_view_height": 210,
+    "asper_format": False,
+}
+BUILT_IN_PRESETS = {
+    "paperless": {
+        **DEFAULT_UI_SETTINGS,
+        "convert_office": True,
+        "resize_pdf": True,
+        "resize_size": "A4",
+        "save_mode": "balanced",
+        "add_bookmark_page_number": True,
+        "add_page": True,
+        "expand_all": False,
+        "collapse_level": 1,
+        "add_pdf_page_numbers": True,
+        "page_start_number": 1,
+        "page_font_size": 30,
+        "page_margin_right": 10,
+        "page_margin_bottom": 10,
+        "page_font": "helv",
+        "page_color": "red",
+        "page_opacity": 0.20,
+        "scale_mode": "relative",
+        "scale_x": 0.80,
+        "scale_y": 0.80,
+    },
+    "mail": {
+        **DEFAULT_UI_SETTINGS,
+        "convert_office": True,
+        "convert_mail": True,
+        "eml_encoding": "auto",
+        "resize_pdf": True,
+        "resize_size": "A4",
+        "save_mode": "balanced",
+        "add_bookmark_page_number": True,
+        "add_page": True,
+        "expand_all": False,
+        "collapse_level": 1,
+        "add_pdf_page_numbers": True,
+        "page_start_number": 1,
+        "page_font_size": 30,
+        "page_margin_right": 10,
+        "page_margin_bottom": 10,
+        "page_font": "helv",
+        "page_color": "red",
+        "page_opacity": 0.20,
+        "scale_mode": "relative",
+        "scale_x": 0.80,
+        "scale_y": 0.80,
+    },
+    "asp": {
+        **DEFAULT_UI_SETTINGS,
+        "convert_office": False,
+        "resize_pdf": False,
+        "resize_size": "A4",
+        "preflight_detail_repair": True,
+        "save_mode": "speed",
+        "add_bookmark_page_number": True,
+        "add_page": True,
+        "expand_all": False,
+        "collapse_level": 1,
+        "add_pdf_page_numbers": True,
+        "page_start_number": 1,
+        "page_font_size": 100,
+        "page_margin_right": 10,
+        "page_margin_bottom": 10,
+        "page_font": "helv",
+        "page_color": "red",
+        "page_opacity": 0.20,
+        "scale_mode": "relative",
+        "scale_x": 0.80,
+        "scale_y": 0.80,
+        "asper_format": True,
+    },
+}
+
+
+def settings_file_path():
+    base_dir = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
+    return os.path.join(base_dir, "kojiPDF", "settings.json")
 
 
 def _scaled_pixel(value, factor):
@@ -297,6 +408,7 @@ class FileSelectorApp:
         self._progress_queue = queue.Queue()
         self._progress_poll_after_id = None
         self.language = "ja"
+        self.custom_presets = self._load_custom_presets()
         self.window = tb.Window(themename="flatly")
         self.tk_scaling = float(self.window.tk.call("tk", "scaling"))
         self.ui_scale = self.tk_scaling / TK_SCALING_BASELINE
@@ -412,6 +524,7 @@ class FileSelectorApp:
         notice_panel = tk.Frame(intro_panel, bg=PANEL_BG)
         notice_panel.columnconfigure(0, minsize=self._px(70))
         notice_panel.columnconfigure(1, weight=1)
+        notice_panel.columnconfigure(2, minsize=self._px(238))
         notice_panel.rowconfigure(0, weight=1)
         notice_panel.pack(fill="x", expand=True)
         self.notice_panel = notice_panel
@@ -440,6 +553,7 @@ class FileSelectorApp:
         self.intro_icon_label.grid(row=0, column=0, sticky="w", padx=self._pad(0, 8))
         self.notice_label = tb.Label(notice_panel, style="Notice.TLabel", wraplength=self._px(630), justify="left")
         self.notice_label.grid(row=0, column=1, sticky="ew")
+        self._build_preset_controls(notice_panel)
         notice_panel.bind("<Configure>", self._sync_notice_wraplength)
 
         top_panel = tk.Frame(
@@ -512,6 +626,50 @@ class FileSelectorApp:
         self.dpi_status_label.grid(row=0, column=1, sticky="se")
         self._draw_run_button()
 
+    def _build_preset_controls(self, parent):
+        frame = tb.Frame(parent, style="Panel.TFrame")
+        frame.grid(row=0, column=2, sticky="e", padx=self._pad(10, 0))
+        self.preset_label = tb.Label(frame, style="FormLabel.TLabel")
+        self.preset_label.grid(row=0, column=0, sticky="w", pady=self._pad(0, 2))
+        self.reset_preset_button = tb.Button(
+            frame,
+            width=2,
+            bootstyle="secondary-outline",
+            command=self.reset_saved_presets,
+        )
+        self.reset_preset_button.grid(row=0, column=1, sticky="e", pady=self._pad(0, 2))
+        self.preset_var = tk.StringVar()
+        self.preset_combo = self._make_combobox(
+            frame,
+            textvariable=self.preset_var,
+            values=self._preset_display_values(),
+            width=18,
+        )
+        self.preset_combo.bind("<<ComboboxSelected>>", lambda _event: self.load_selected_preset(), add="+")
+        self.preset_combo.grid(row=1, column=0, columnspan=2, sticky="ew", pady=self._px(1))
+        self.save_preset_button = tb.Button(frame, bootstyle="secondary-outline", command=self.save_selected_preset)
+        self.save_preset_button.grid(row=2, column=0, columnspan=2, sticky="ew", pady=self._px(2))
+        frame.columnconfigure(0, weight=1)
+        frame.columnconfigure(1, weight=0)
+        self._set_preset_code("none")
+
+    def _make_combobox(self, parent, **kwargs):
+        kwargs.setdefault("state", "readonly")
+        combo = tb.Combobox(parent, **kwargs)
+        combo.bind("<<ComboboxSelected>>", self._clear_combobox_selection, add="+")
+        combo.bind("<FocusIn>", self._clear_combobox_selection, add="+")
+        combo.bind("<ButtonRelease-1>", self._clear_combobox_selection, add="+")
+        return combo
+
+    def _clear_combobox_selection(self, event):
+        combo = event.widget
+        try:
+            combo.selection_clear()
+            combo.icursor("end")
+            self.window.focus_set()
+        except tk.TclError:
+            pass
+
     def _band(self, row, title_attr, parent=None, column=0, columnspan=1, padx=(0, 0), pady=(0, 4)):
         parent = parent or self.options_group
         frame = tb.Frame(
@@ -571,7 +729,7 @@ class FileSelectorApp:
             command=self.toggle_mail_options,
         )
         self.eml_encoding_label = tb.Label(eml_encoding_row, style="Field.TLabel")
-        self.eml_encoding_combo = tb.Combobox(
+        self.eml_encoding_combo = self._make_combobox(
             eml_encoding_row,
             textvariable=self.eml_encoding_var,
             values=self._eml_encoding_display_values(),
@@ -599,12 +757,11 @@ class FileSelectorApp:
             bootstyle="primary-round-toggle",
         )
         self.save_mode_label = tb.Label(save_mode_frame, style="Field.TLabel")
-        self.save_mode_combo = tb.Combobox(
+        self.save_mode_combo = self._make_combobox(
             save_mode_frame,
             textvariable=self.save_mode_var,
             values=self._save_mode_display_values(),
             width=13,
-            state="readonly",
         )
         self.save_mode_combo.bind("<<ComboboxSelected>>", self._on_save_mode_selected)
         self._set_save_mode_code("balanced")
@@ -619,7 +776,7 @@ class FileSelectorApp:
         resize_row.grid(row=6, column=0, sticky="w", pady=self._px(3))
         self.resize_pdf_checkbox.pack(side="left")
         self.resize_size_var = tk.StringVar(value="A4")
-        self.resize_size_combo = tb.Combobox(resize_row, textvariable=self.resize_size_var, values=["A3", "A4", "A5", "B4", "B5"], width=8, state="readonly")
+        self.resize_size_combo = self._make_combobox(resize_row, textvariable=self.resize_size_var, values=["A3", "A4", "A5", "B4", "B5"], width=8)
         self.resize_size_combo.pack(side="left", padx=self._pad(12, 0))
         save_mode_frame.grid(row=1, column=1, sticky="nw", padx=self._pad(26, 0), pady=self._px(3))
         self.save_mode_label.pack(side="left", padx=self._pad(0, 6))
@@ -669,22 +826,20 @@ class FileSelectorApp:
 
         font_field, self.page_font_label = make_page_field(1, 0)
         self.page_font_var = tk.StringVar(value=self._page_number_font_labels()["helv"])
-        self.page_font_combo = tb.Combobox(
+        self.page_font_combo = self._make_combobox(
             font_field,
             textvariable=self.page_font_var,
             values=self._page_number_font_display_values(),
             width=10,
-            state="readonly",
         )
         self.page_font_combo.pack(side="left")
         color_field, self.page_color_label = make_page_field(1, 1)
         self.page_color_var = tk.StringVar(value=self._page_number_color_labels()["red"])
-        self.page_color_combo = tb.Combobox(
+        self.page_color_combo = self._make_combobox(
             color_field,
             textvariable=self.page_color_var,
             values=self._page_number_color_display_values(),
             width=10,
-            state="readonly",
         )
         self.page_color_combo.pack(side="left")
         opacity_field, self.page_opacity_label = make_page_field(1, 2)
@@ -805,6 +960,10 @@ class FileSelectorApp:
         self._normalize_spinbox(spinbox)
         value = float(spinbox._koji_var.get())
         return int(value) if spinbox._koji_integer else value
+
+    def _set_spinbox_value(self, spinbox, value):
+        spinbox._koji_var.set(str(value))
+        self._normalize_spinbox(spinbox)
 
     def _normalize_spinbox(self, spinbox):
         try:
@@ -933,6 +1092,93 @@ class FileSelectorApp:
         }
         return legacy_labels.get(selected, "red")
 
+    def _preset_labels(self):
+        if self.language == "ja":
+            return {
+                "none": "設定なし",
+                "paperless": "ペーパーレス会議設定",
+                "mail": "メールデータ整理設定",
+                "asp": "工事情報共有システム設定",
+                "custom1": "カスタム1",
+                "custom2": "カスタム2",
+            }
+        return {
+            "none": "No preset",
+            "paperless": "Paperless meeting",
+            "mail": "Mail data cleanup",
+            "asp": "Construction ASP",
+            "custom1": "Custom 1",
+            "custom2": "Custom 2",
+        }
+
+    def _preset_display_values(self):
+        labels = self._preset_labels()
+        return [labels[code] for code in PRESET_CODES]
+
+    def _set_preset_code(self, code):
+        labels = self._preset_labels()
+        self.preset_var.set(labels.get(code, labels["paperless"]))
+
+    def _current_preset_code(self):
+        selected = self.preset_var.get()
+        labels = self._preset_labels()
+        for code, label in labels.items():
+            if selected == label:
+                return code
+        legacy_labels = {
+            "設定なし": "none",
+            "ペーパーレス会議設定": "paperless",
+            "メールデータ整理設定": "mail",
+            "工事情報共有システム設定": "asp",
+            "カスタム1": "custom1",
+            "カスタム2": "custom2",
+            "No preset": "none",
+            "Paperless meeting": "paperless",
+            "Mail data cleanup": "mail",
+            "Construction ASP": "asp",
+            "Custom 1": "custom1",
+            "Custom 2": "custom2",
+        }
+        return legacy_labels.get(selected, "paperless")
+
+    def _load_custom_presets(self):
+        path = settings_file_path()
+        try:
+            with open(path, "r", encoding="utf-8-sig") as settings_file:
+                data = json.load(settings_file)
+        except (OSError, json.JSONDecodeError):
+            return {}
+
+        presets = data.get("custom_presets", {})
+        if not isinstance(presets, dict):
+            return {}
+        return {
+            code: presets[code]
+            for code in PRESET_CODES
+            if isinstance(presets.get(code), dict)
+        }
+
+    def _save_custom_presets(self):
+        path = settings_file_path()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        data = {
+            "version": 1,
+            "custom_presets": {
+                code: self.custom_presets[code]
+                for code in PRESET_CODES
+                if code in self.custom_presets
+            },
+        }
+        with open(path, "w", encoding="utf-8") as settings_file:
+            json.dump(data, settings_file, ensure_ascii=False, indent=2)
+
+    def _preset_settings(self, code):
+        if code in self.custom_presets:
+            return dict(self.custom_presets[code])
+        if code in BUILT_IN_PRESETS:
+            return dict(BUILT_IN_PRESETS[code])
+        return None
+
     SAVE_MODE_CODES = ("speed", "balanced", "smaller_file")
 
     def _save_mode_labels(self):
@@ -1038,6 +1284,24 @@ class FileSelectorApp:
                 "page_font": "Font",
                 "page_color": "Color",
                 "page_opacity": "Opacity",
+                "preset": "Preset",
+                "save_preset": "Save",
+                "reset_preset": "↺",
+                "preset_saved_title": "Preset saved",
+                "preset_saved_message": "Current settings were saved to {preset}.",
+                "preset_overwrite_title": "Overwrite preset?",
+                "preset_overwrite_message": "Overwrite {preset} with the current settings?",
+                "preset_empty_title": "No custom preset",
+                "preset_empty_message": "{preset} has not been saved yet.",
+                "preset_none_title": "Select a preset",
+                "preset_none_message": "Select a preset before saving settings.",
+                "preset_reset_title": "Reset saved presets?",
+                "preset_reset_message": "Delete saved preset settings and restore built-in defaults?",
+                "preset_reset_done_title": "Presets reset",
+                "preset_reset_done_message": "Saved preset settings were deleted.",
+                "preset_reset_missing_message": "There were no saved preset settings.",
+                "preset_error_title": "Preset error",
+                "preset_error_message": "Could not save preset settings.\n{error}",
                 "relative_scale": "Relative",
                 "absolute_scale": "Absolute",
                 "horizontal_scale": "Width corr.",
@@ -1117,6 +1381,24 @@ class FileSelectorApp:
                 "page_font": "フォント",
                 "page_color": "色",
                 "page_opacity": "不透明度",
+                "preset": "設定プリセット",
+                "save_preset": "保存",
+                "reset_preset": "↺",
+                "preset_saved_title": "プリセット保存",
+                "preset_saved_message": "現在の設定を {preset} に保存しました。",
+                "preset_overwrite_title": "プリセットを上書きしますか？",
+                "preset_overwrite_message": "{preset} を現在の設定で上書きしますか？",
+                "preset_empty_title": "未保存のカスタム設定",
+                "preset_empty_message": "{preset} はまだ保存されていません。",
+                "preset_none_title": "プリセットを選択してください",
+                "preset_none_message": "設定を保存する前にプリセットを選択してください。",
+                "preset_reset_title": "保存済みプリセットをリセットしますか？",
+                "preset_reset_message": "保存済みプリセット設定を削除し、内蔵の標準値に戻しますか？",
+                "preset_reset_done_title": "プリセットをリセットしました",
+                "preset_reset_done_message": "保存済みプリセット設定を削除しました。",
+                "preset_reset_missing_message": "保存済みプリセット設定はありませんでした。",
+                "preset_error_title": "プリセットエラー",
+                "preset_error_message": "プリセット設定を保存できませんでした。\n{error}",
                 "relative_scale": "相対補正",
                 "absolute_scale": "絶対補正",
                 "horizontal_scale": "表示幅補正",
@@ -1156,7 +1438,7 @@ class FileSelectorApp:
                 self._sync_dynamic_wraplengths()
                 return
         else:
-            available_width = event.width - self._px(78)
+            available_width = event.width - self._px(328)
 
         wraplength = max(self._px(300), available_width)
         self.notice_label.configure(wraplength=wraplength)
@@ -1169,12 +1451,13 @@ class FileSelectorApp:
 
         root_horizontal_padding = self._px(28)
         notice_panel_padding_and_icon = self._px(94)
+        notice_panel_preset_width = self._px(250)
         license_panel_padding = self._px(180)
         path_controls_width = self._px(250)
 
         inner_width = max(self._px(300), content_width - root_horizontal_padding)
         self.subtitle_label.configure(wraplength=max(self._px(300), inner_width - self._px(16)))
-        self.notice_label.configure(wraplength=max(self._px(300), inner_width - notice_panel_padding_and_icon))
+        self.notice_label.configure(wraplength=max(self._px(300), inner_width - notice_panel_padding_and_icon - notice_panel_preset_width))
         self.license_notice_label.configure(wraplength=max(self._px(300), inner_width - license_panel_padding))
         self.folder_label.configure(wraplength=max(self._px(300), inner_width - path_controls_width))
         self.file_label.configure(wraplength=max(self._px(300), inner_width - path_controls_width))
@@ -1193,6 +1476,13 @@ class FileSelectorApp:
         self.window.after_idle(self._sync_notice_wraplength)
         self.folder_button.configure(text=self._text("select_folder"))
         self.file_button.configure(text=self._text("output"))
+        if self._widget_exists("preset_combo"):
+            current_preset = self._current_preset_code()
+            self.preset_label.configure(text=self._text("preset"))
+            self.preset_combo.configure(values=self._preset_display_values())
+            self._set_preset_code(current_preset)
+            self.save_preset_button.configure(text=self._text("save_preset"))
+            self.reset_preset_button.configure(text=self._text("reset_preset"))
 
         if not self._widget_exists("general_section_label"):
             if hasattr(self, "folder_text"):
@@ -1675,6 +1965,160 @@ class FileSelectorApp:
     def toggle_mail_options(self):
         enabled = self.convert_office_var.get() and self.convert_mail_var.get()
         self.eml_encoding_combo.configure(state="readonly" if enabled else "disabled")
+
+    def _refresh_option_states(self):
+        office_state = "normal" if self.convert_office_var.get() else "disabled"
+        self.convert_mail_checkbox.configure(state=office_state)
+        self.ppt_slide_bookmarks_checkbox.configure(state=office_state)
+        self.confirm_temp_folder_delete_checkbox.configure(state=office_state)
+        self.toggle_mail_options()
+        self.toggle_page_number_options()
+        self.toggle_scale_mode()
+        self.toggle_collapse_spinbox()
+
+    def current_ui_settings(self):
+        return {
+            "convert_office": self.convert_office_var.get(),
+            "convert_mail": self.convert_mail_var.get(),
+            "eml_encoding": self._current_eml_encoding_code(),
+            "ppt_slide_bookmarks": self.ppt_slide_bookmarks_var.get(),
+            "confirm_temp_folder_delete": self.confirm_temp_folder_delete_var.get(),
+            "resize_pdf": self.resize_pdf_var.get(),
+            "resize_size": self.resize_size_var.get(),
+            "preflight_detail_repair": self.preflight_detail_repair_var.get(),
+            "preflight_confirm": self.preflight_confirm_var.get(),
+            "save_mode": self._current_save_mode_code(),
+            "add_bookmark_page_number": self.add_bookmark_page_number_var.get(),
+            "add_page": self.add_page_var.get(),
+            "expand_all": self.expand_all_var.get(),
+            "collapse_level": self._spinbox_value(self.collapse_spinbox),
+            "keep_pdf_extension": self.keep_pdf_extension_var.get(),
+            "add_pdf_page_numbers": self.add_pdf_page_numbers_var.get(),
+            "page_start_number": self._spinbox_value(self.page_start_number_spinbox),
+            "page_font_size": self._spinbox_value(self.page_font_size_spinbox),
+            "page_margin_right": self._spinbox_value(self.page_margin_right_spinbox),
+            "page_margin_bottom": self._spinbox_value(self.page_margin_bottom_spinbox),
+            "page_font": self._current_page_number_font_code(),
+            "page_color": self._current_page_number_color_code(),
+            "page_opacity": self._spinbox_value(self.page_opacity_spinbox),
+            "scale_mode": self.scale_mode_var.get(),
+            "scale_x": self._spinbox_value(self.scale_x_spinbox),
+            "scale_y": self._spinbox_value(self.scale_y_spinbox),
+            "base_view_width": self._spinbox_value(self.base_view_width_spinbox),
+            "base_view_height": self._spinbox_value(self.base_view_height_spinbox),
+            "asper_format": self.asper_format_var.get(),
+        }
+
+    def apply_ui_settings(self, settings):
+        values = {**DEFAULT_UI_SETTINGS, **(settings or {})}
+        self.convert_office_var.set(bool(values["convert_office"]))
+        self.convert_mail_var.set(bool(values["convert_mail"]))
+        self._set_eml_encoding_code(values["eml_encoding"])
+        self.ppt_slide_bookmarks_var.set(bool(values["ppt_slide_bookmarks"]))
+        self.confirm_temp_folder_delete_var.set(bool(values["confirm_temp_folder_delete"]))
+        self.resize_pdf_var.set(bool(values["resize_pdf"]))
+        self.resize_size_var.set(values["resize_size"] if values["resize_size"] in {"A3", "A4", "A5", "B4", "B5"} else "A4")
+        self.preflight_detail_repair_var.set(bool(values["preflight_detail_repair"]))
+        self.preflight_confirm_var.set(bool(values["preflight_confirm"]))
+        self._set_save_mode_code(values["save_mode"])
+        self.add_bookmark_page_number_var.set(bool(values["add_bookmark_page_number"]))
+        self.add_page_var.set(bool(values["add_page"]))
+        self.expand_all_var.set(bool(values["expand_all"]))
+        self._set_spinbox_value(self.collapse_spinbox, values["collapse_level"])
+        self.keep_pdf_extension_var.set(bool(values["keep_pdf_extension"]))
+        self.add_pdf_page_numbers_var.set(bool(values["add_pdf_page_numbers"]))
+        self._set_spinbox_value(self.page_start_number_spinbox, values["page_start_number"])
+        self._set_spinbox_value(self.page_font_size_spinbox, values["page_font_size"])
+        self._set_spinbox_value(self.page_margin_right_spinbox, values["page_margin_right"])
+        self._set_spinbox_value(self.page_margin_bottom_spinbox, values["page_margin_bottom"])
+        self._set_page_number_font_code(values["page_font"])
+        self._set_page_number_color_code(values["page_color"])
+        self._set_spinbox_value(self.page_opacity_spinbox, values["page_opacity"])
+        self.scale_mode_var.set(values["scale_mode"] if values["scale_mode"] in {"relative", "absolute"} else "relative")
+        self._set_spinbox_value(self.scale_x_spinbox, values["scale_x"])
+        self._set_spinbox_value(self.scale_y_spinbox, values["scale_y"])
+        self._set_spinbox_value(self.base_view_width_spinbox, values["base_view_width"])
+        self._set_spinbox_value(self.base_view_height_spinbox, values["base_view_height"])
+        self.asper_format_var.set(bool(values["asper_format"]))
+        self._refresh_option_states()
+
+    def load_selected_preset(self):
+        code = self._current_preset_code()
+        if code == "none":
+            return
+        settings = self._preset_settings(code)
+        if settings is None:
+            messagebox.showinfo(
+                self._text("preset_empty_title"),
+                self._text("preset_empty_message").format(preset=self.preset_var.get()),
+                parent=self.window,
+            )
+            return
+        self.apply_ui_settings(settings)
+
+    def save_selected_preset(self):
+        code = self._current_preset_code()
+        if code == "none":
+            messagebox.showinfo(
+                self._text("preset_none_title"),
+                self._text("preset_none_message"),
+                parent=self.window,
+            )
+            return
+        if code in BUILT_IN_PRESET_CODES:
+            should_overwrite = messagebox.askyesno(
+                self._text("preset_overwrite_title"),
+                self._text("preset_overwrite_message").format(preset=self.preset_var.get()),
+                parent=self.window,
+            )
+            if not should_overwrite:
+                return
+        self.custom_presets[code] = self.current_ui_settings()
+        try:
+            self._save_custom_presets()
+        except OSError as exc:
+            messagebox.showerror(
+                self._text("preset_error_title"),
+                self._text("preset_error_message").format(error=exc),
+                parent=self.window,
+            )
+            return
+        messagebox.showinfo(
+            self._text("preset_saved_title"),
+            self._text("preset_saved_message").format(preset=self.preset_var.get()),
+            parent=self.window,
+        )
+
+    def reset_saved_presets(self):
+        should_reset = messagebox.askyesno(
+            self._text("preset_reset_title"),
+            self._text("preset_reset_message"),
+            parent=self.window,
+        )
+        if not should_reset:
+            return
+
+        path = settings_file_path()
+        deleted = False
+        try:
+            if os.path.exists(path):
+                os.remove(path)
+                deleted = True
+        except OSError as exc:
+            messagebox.showerror(
+                self._text("preset_error_title"),
+                self._text("preset_error_message").format(error=exc),
+                parent=self.window,
+            )
+            return
+
+        self.custom_presets = {}
+        self._set_preset_code("none")
+        messagebox.showinfo(
+            self._text("preset_reset_done_title"),
+            self._text("preset_reset_done_message" if deleted else "preset_reset_missing_message"),
+            parent=self.window,
+        )
 
     def select_folder(self):
         folder = filedialog.askdirectory(
