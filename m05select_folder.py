@@ -53,6 +53,7 @@ SECTION_TEXT_COLOR = "#073f66"
 STATUS_TEXT_COLOR = "#516475"
 RUN_BUTTON_FILL = "#8f1d2c"
 RUN_BUTTON_FILL_HOVER = "#a92536"
+POINTS_PER_MM = 72 / 25.4
 SAVE_MODE_OPTIONS = {
     "speed": {"save_options": {"garbage": 1, "deflate": False, "auto_clean_on_warning": False}},
     "balanced": {"save_options": {"garbage": 1, "deflate": True, "auto_clean_on_warning": False}},
@@ -87,6 +88,46 @@ PAGE_NUMBER_COLOR_VALUES = {
     "blue": (0, 0, 1),
     "black": (0, 0, 0),
 }
+PAGE_NUMBER_POSITION_LABELS = {
+    "ja": {
+        "top_left": "左上",
+        "top_center": "中央上",
+        "top_right": "右上",
+        "bottom_left": "左下",
+        "bottom_center": "中央下",
+        "bottom_right": "右下",
+    },
+    "en": {
+        "top_left": "Top left",
+        "top_center": "Top center",
+        "top_right": "Top right",
+        "bottom_left": "Bottom left",
+        "bottom_center": "Bottom center",
+        "bottom_right": "Bottom right",
+    },
+}
+PAGE_NUMBER_FORMAT_LABELS = {
+    "ja": {
+        "number": "1",
+        "page_number": "Page 1",
+        "number_total": "1 / 10",
+        "page_of_total": "Page 1 of 10",
+        "p_number": "p.1",
+        "no_number": "No.1",
+        "dash_number": "- 1 -",
+        "bracket_number": "【1】",
+    },
+    "en": {
+        "number": "1",
+        "page_number": "Page 1",
+        "number_total": "1 / 10",
+        "page_of_total": "Page 1 of 10",
+        "p_number": "p.1",
+        "no_number": "No.1",
+        "dash_number": "- 1 -",
+        "bracket_number": "【1】",
+    },
+}
 BOOKMARK_VIEW_MODE_LABELS = {
     "ja": {
         "adjust": "補正値で調整",
@@ -120,8 +161,13 @@ DEFAULT_UI_SETTINGS = {
     "collapse_level": 1,
     "keep_pdf_extension": False,
     "add_pdf_page_numbers": False,
+    "page_number_position": "bottom_right",
+    "page_number_format": "number",
+    "page_start_page": 1,
     "page_start_number": 1,
     "page_font_size": 30,
+    "page_margin_x": 5,
+    "page_margin_y": 5,
     "page_margin_right": 10,
     "page_margin_bottom": 10,
     "page_font": "helv",
@@ -183,7 +229,7 @@ BUILT_IN_PRESETS = {
         "convert_office": False,
         "resize_pdf": False,
         "resize_size": "A4",
-        "preflight_detail_repair": True,
+        "preflight_detail_repair": False,
         "save_mode": "speed",
         "add_bookmark_page_number": True,
         "add_page": True,
@@ -498,6 +544,7 @@ class FileSelectorApp:
         style.configure("LicenseInner.TFrame", background=PANEL_BG)
         style.configure("Path.TLabel", background=PANEL_BG, foreground=TEXT_COLOR, borderwidth=1, relief="solid", padding=self._px(7))
         style.configure("Field.TLabel", background=BAND_BG, foreground=TEXT_COLOR, font=("Yu Gothic UI", 10))
+        style.configure("Hint.TLabel", background=BAND_BG, foreground=MUTED_TEXT_COLOR, font=("Yu Gothic UI", 8))
         style.configure("Section.TLabel", background=BAND_BG, foreground=SECTION_TEXT_COLOR, font=("Yu Gothic UI", 11, "bold"))
         style.configure("FormLabel.TLabel", background=PANEL_BG, foreground=MUTED_TEXT_COLOR, font=("Yu Gothic UI", 10, "bold"))
         style.configure("Run.TButton", font=("Yu Gothic UI", 12, "bold"), padding=self._pad(26, 10))
@@ -537,7 +584,7 @@ class FileSelectorApp:
         notice_panel = tk.Frame(intro_panel, bg=PANEL_BG)
         notice_panel.columnconfigure(0, minsize=self._px(70))
         notice_panel.columnconfigure(1, weight=1)
-        notice_panel.columnconfigure(2, minsize=self._px(180))
+        notice_panel.columnconfigure(2, minsize=self._px(130))
         notice_panel.rowconfigure(0, weight=1)
         notice_panel.pack(fill="x", expand=True)
         self.notice_panel = notice_panel
@@ -564,8 +611,10 @@ class FileSelectorApp:
                 height=2,
             )
         self.intro_icon_label.grid(row=0, column=0, sticky="w", padx=self._pad(0, 8))
-        self.notice_label = tb.Label(notice_panel, style="Notice.TLabel", wraplength=self._px(630), justify="left")
-        self.notice_label.grid(row=0, column=1, sticky="ew")
+        self.notice_lines_frame = tb.Frame(notice_panel, style="Panel.TFrame")
+        self.notice_lines_frame.grid(row=0, column=1, sticky="ew")
+        self.notice_lines_frame.columnconfigure(1, weight=1)
+        self.notice_line_widgets = []
         self._build_preset_controls(notice_panel)
         notice_panel.bind("<Configure>", self._sync_notice_wraplength)
 
@@ -656,14 +705,14 @@ class FileSelectorApp:
             frame,
             textvariable=self.preset_var,
             values=self._preset_display_values(),
-            width=18,
+            width=17,
         )
         self.preset_combo.bind("<<ComboboxSelected>>", lambda _event: self.load_selected_preset(), add="+")
         self.preset_combo.grid(row=1, column=0, columnspan=2, sticky="ew", pady=self._px(1))
         self.save_preset_button = tb.Button(frame, bootstyle="secondary-outline", command=self.save_selected_preset)
         self.save_preset_button.grid(row=2, column=0, columnspan=2, sticky="ew", pady=self._px(2))
         frame.columnconfigure(0, weight=1)
-        frame.columnconfigure(1, weight=0)
+        frame.columnconfigure(1, weight=0, minsize=self._px(34))
         self._set_preset_code("none")
 
     def _make_combobox(self, parent, **kwargs):
@@ -710,7 +759,6 @@ class FileSelectorApp:
         frame = self._band(0, "general_section_label", column=0, padx=(0, 4))
         frame.columnconfigure(0, weight=1)
         frame.columnconfigure(1, weight=0)
-        self.add_page_var = tk.BooleanVar(value=False)
         self.convert_office_var = tk.BooleanVar(value=False)
         self.convert_mail_var = tk.BooleanVar(value=False)
         self.eml_encoding_var = tk.StringVar(value="Auto detect")
@@ -718,7 +766,6 @@ class FileSelectorApp:
         self.confirm_temp_folder_delete_var = tk.BooleanVar(value=False)
         self.resize_pdf_var = tk.BooleanVar(value=False)
         self.preflight_detail_repair_var = tk.BooleanVar(value=False)
-        self.preflight_confirm_var = tk.BooleanVar(value=False)
         self.asper_format_var = tk.BooleanVar(value=False)
         self.keep_pdf_extension_var = tk.BooleanVar(value=False)
         self.save_mode_var = tk.StringVar(value="balanced")
@@ -734,20 +781,11 @@ class FileSelectorApp:
             bootstyle="primary-round-toggle",
         )
         mail_options_row = tb.Frame(frame, style="Band.TFrame")
-        eml_encoding_row = tb.Frame(frame, style="Band.TFrame")
         self.convert_mail_checkbox = tb.Checkbutton(
             mail_options_row,
             variable=self.convert_mail_var,
             bootstyle="primary-round-toggle",
             command=self.toggle_mail_options,
-        )
-        self.eml_encoding_label = tb.Label(eml_encoding_row, style="Field.TLabel")
-        self.eml_encoding_combo = self._make_combobox(
-            eml_encoding_row,
-            textvariable=self.eml_encoding_var,
-            values=self._eml_encoding_display_values(),
-            width=13,
-            state="disabled",
         )
         self.confirm_temp_folder_delete_checkbox = tb.Checkbutton(
             frame,
@@ -755,19 +793,21 @@ class FileSelectorApp:
             bootstyle="primary-round-toggle",
         )
         resize_row = tb.Frame(frame, style="Band.TFrame")
-        save_mode_frame = tb.Frame(frame, style="Band.TFrame")
-        check_options_frame = tb.Frame(frame, style="Band.TFrame")
+        self.merge_right_options_frame = tb.Frame(frame, style="Band.TFrame")
+        save_mode_frame = tb.Frame(self.merge_right_options_frame, style="Band.TFrame")
+        check_options_frame = tb.Frame(self.merge_right_options_frame, style="Band.TFrame")
+        check_options_frame.columnconfigure(0, weight=1)
         self.resize_pdf_checkbox = tb.Checkbutton(resize_row, variable=self.resize_pdf_var, bootstyle="primary-round-toggle")
-        self.error_check_label = tb.Label(check_options_frame, style="Field.TLabel")
         self.preflight_detail_repair_checkbox = tb.Checkbutton(
             check_options_frame,
             variable=self.preflight_detail_repair_var,
             bootstyle="primary-round-toggle",
         )
-        self.preflight_confirm_checkbox = tb.Checkbutton(
+        self.preflight_detail_repair_hint_label = tb.Label(
             check_options_frame,
-            variable=self.preflight_confirm_var,
-            bootstyle="primary-round-toggle",
+            style="Hint.TLabel",
+            justify="left",
+            wraplength=self._px(165),
         )
         self.save_mode_label = tb.Label(save_mode_frame, style="Field.TLabel")
         self.save_mode_combo = self._make_combobox(
@@ -781,9 +821,6 @@ class FileSelectorApp:
         self.convert_office_checkbox.grid(row=1, column=0, sticky="w", pady=self._px(3))
         mail_options_row.grid(row=2, column=0, sticky="w", padx=self._pad(66, 0), pady=self._px(3))
         self.convert_mail_checkbox.pack(side="left")
-        eml_encoding_row.grid(row=3, column=0, sticky="w", padx=self._pad(96, 0), pady=self._px(2))
-        self.eml_encoding_label.pack(side="left", padx=self._pad(0, 6))
-        self.eml_encoding_combo.pack(side="left")
         self.ppt_slide_bookmarks_checkbox.grid(row=4, column=0, sticky="w", padx=self._pad(66, 0), pady=self._px(3))
         self.confirm_temp_folder_delete_checkbox.grid(row=5, column=0, sticky="w", padx=self._pad(66, 0), pady=self._px(3))
         resize_row.grid(row=6, column=0, sticky="w", pady=self._px(3))
@@ -791,13 +828,13 @@ class FileSelectorApp:
         self.resize_size_var = tk.StringVar(value="A4")
         self.resize_size_combo = self._make_combobox(resize_row, textvariable=self.resize_size_var, values=["A3", "A4", "A5", "B4", "B5"], width=8)
         self.resize_size_combo.pack(side="left", padx=self._pad(12, 0))
-        save_mode_frame.grid(row=1, column=1, sticky="nw", padx=self._pad(26, 0), pady=self._px(3))
+        self.merge_right_options_frame.grid(row=1, column=1, rowspan=6, sticky="ne", padx=self._pad(10, 0), pady=self._px(3))
+        save_mode_frame.grid(row=0, column=0, sticky="ne", pady=self._pad(0, 8))
         self.save_mode_label.pack(side="left", padx=self._pad(0, 6))
         self.save_mode_combo.pack(side="left")
-        check_options_frame.grid(row=4, column=1, rowspan=3, sticky="sw", padx=self._pad(18, 0), pady=self._px(1))
-        self.error_check_label.grid(row=0, column=0, sticky="w", pady=self._pad(6, 0))
-        self.preflight_detail_repair_checkbox.grid(row=1, column=0, sticky="w", pady=self._px(2))
-        self.preflight_confirm_checkbox.grid(row=2, column=0, sticky="w", pady=self._px(2))
+        check_options_frame.grid(row=1, column=0, sticky="ne")
+        self.preflight_detail_repair_checkbox.grid(row=0, column=0, sticky="w", pady=self._pad(6, 0))
+        self.preflight_detail_repair_hint_label.grid(row=1, column=0, sticky="w", padx=self._pad(26, 0), pady=self._pad(0, 0))
 
     def _build_page_number_options(self):
         frame = self._band(1, "page_number_section_label", column=0, columnspan=2)
@@ -810,34 +847,71 @@ class FileSelectorApp:
             bootstyle="primary-round-toggle",
             command=self.toggle_page_number_options,
         )
-        self.add_pdf_page_numbers_checkbox.pack(side="left", padx=self._pad(12, 0))
+        self.add_pdf_page_numbers_checkbox.pack(side="left", padx=self._pad(8, 0))
 
         page_fields_frame = tb.Frame(frame, style="Band.TFrame")
         page_fields_frame.grid(row=1, column=0, columnspan=8, sticky="ew", pady=self._px(1))
-        for col in range(4):
+        for col in range(5):
             page_fields_frame.columnconfigure(col, weight=1, uniform="page_number_fields")
 
         def make_page_field(row, column):
             field_frame = tb.Frame(page_fields_frame, style="Band.TFrame")
-            field_frame.grid(row=row, column=column, sticky="", padx=self._pad(4, 4), pady=self._px(3))
-            label = tb.Label(field_frame, style="Field.TLabel", width=13, anchor="e")
-            label.pack(side="left", padx=self._pad(0, 6))
+            field_frame.grid(row=row, column=column, sticky="", padx=self._pad(2, 2), pady=self._px(3))
+            label = tb.Label(field_frame, style="Field.TLabel", width=10, anchor="e")
+            label.pack(side="left", padx=self._pad(0, 4))
             return field_frame, label
 
-        start_field, self.page_start_number_label = make_page_field(0, 0)
+        position_field, self.page_number_position_label = make_page_field(0, 0)
+        self.page_number_position_var = tk.StringVar(value=self._page_number_position_labels()["bottom_right"])
+        self.page_number_position_combo = self._make_combobox(
+            position_field,
+            textvariable=self.page_number_position_var,
+            values=self._page_number_position_display_values(),
+            width=10,
+        )
+        self.page_number_position_combo.bind("<<ComboboxSelected>>", lambda _event: self.toggle_page_number_options(), add="+")
+        self.page_number_position_combo.configure(width=8)
+        self.page_number_position_combo.pack(side="left")
+        format_field, self.page_number_format_label = make_page_field(0, 1)
+        self.page_number_format_var = tk.StringVar(value=self._page_number_format_labels()["number"])
+        self.page_number_format_combo = self._make_combobox(
+            format_field,
+            textvariable=self.page_number_format_var,
+            values=self._page_number_format_display_values(),
+            width=10,
+        )
+        self.page_number_format_combo.configure(width=11)
+        self.page_number_format_combo.pack(side="left")
+        start_page_field, self.page_start_page_label = make_page_field(0, 2)
+        self.page_start_page_spinbox = self._make_spinbox(start_page_field, 1, 9999, 1, 1, integer=True)
+        self.page_start_page_spinbox.pack(side="left")
+        start_field, self.page_start_number_label = make_page_field(0, 3)
         self.page_start_number_spinbox = self._make_spinbox(start_field, 1, 9999, 1, 1, integer=True)
         self.page_start_number_spinbox.pack(side="left")
-        font_size_field, self.page_font_size_label = make_page_field(0, 1)
+        font_size_field = tb.Frame(page_fields_frame, style="Band.TFrame")
+        font_size_field.grid(row=1, column=0, sticky="", padx=self._pad(4, 4), pady=self._px(3))
+        self.page_font_size_label = tb.Label(font_size_field, style="Field.TLabel", width=10, anchor="e")
+        self.page_font_size_label.grid(row=0, column=0, rowspan=2, sticky="e", padx=self._pad(0, 4))
         self.page_font_size_spinbox = self._make_spinbox(font_size_field, 1, 300, 1, 30, integer=True)
-        self.page_font_size_spinbox.pack(side="left")
-        margin_right_field, self.page_margin_right_label = make_page_field(0, 2)
-        self.page_margin_right_spinbox = self._make_spinbox(margin_right_field, 0, 1000, 1, 10, integer=True)
+        self.page_font_size_spinbox.grid(row=0, column=1, sticky="w")
+        self.page_font_size_hint_label = tb.Label(
+            font_size_field,
+            style="Hint.TLabel",
+            width=6,
+            anchor="center",
+        )
+        self.page_font_size_hint_label.grid(row=1, column=1, sticky="ew", pady=self._pad(1, 0))
+        margin_right_field, self.page_margin_right_label = make_page_field(1, 1)
+        self.page_margin_right_spinbox = self._make_spinbox(margin_right_field, 0, 500, 0.5, 5, integer=False)
         self.page_margin_right_spinbox.pack(side="left")
-        margin_bottom_field, self.page_margin_bottom_label = make_page_field(0, 3)
-        self.page_margin_bottom_spinbox = self._make_spinbox(margin_bottom_field, 0, 1000, 1, 10, integer=True)
+        margin_bottom_field, self.page_margin_bottom_label = make_page_field(1, 2)
+        self.page_margin_bottom_spinbox = self._make_spinbox(margin_bottom_field, 0, 500, 0.5, 5, integer=False)
         self.page_margin_bottom_spinbox.pack(side="left")
+        opacity_field, self.page_opacity_label = make_page_field(0, 4)
+        self.page_opacity_spinbox = self._make_spinbox(opacity_field, 0.05, 1.00, 0.05, 0.20, integer=False)
+        self.page_opacity_spinbox.pack(side="left")
 
-        font_field, self.page_font_label = make_page_field(1, 0)
+        font_field, self.page_font_label = make_page_field(1, 3)
         self.page_font_var = tk.StringVar(value=self._page_number_font_labels()["helv"])
         self.page_font_combo = self._make_combobox(
             font_field,
@@ -845,8 +919,9 @@ class FileSelectorApp:
             values=self._page_number_font_display_values(),
             width=10,
         )
+        self.page_font_combo.configure(width=8)
         self.page_font_combo.pack(side="left")
-        color_field, self.page_color_label = make_page_field(1, 1)
+        color_field, self.page_color_label = make_page_field(1, 4)
         self.page_color_var = tk.StringVar(value=self._page_number_color_labels()["red"])
         self.page_color_combo = self._make_combobox(
             color_field,
@@ -854,10 +929,8 @@ class FileSelectorApp:
             values=self._page_number_color_display_values(),
             width=10,
         )
+        self.page_color_combo.configure(width=8)
         self.page_color_combo.pack(side="left")
-        opacity_field, self.page_opacity_label = make_page_field(1, 2)
-        self.page_opacity_spinbox = self._make_spinbox(opacity_field, 0.05, 1.00, 0.05, 0.20, integer=False)
-        self.page_opacity_spinbox.pack(side="left")
 
     def _build_scale_options(self, parent=None):
         frame = self._band(2, "scale_section_label", parent=parent, column=0, padx=(0, 4))
@@ -916,11 +989,16 @@ class FileSelectorApp:
         frame.columnconfigure(1, weight=0)
         frame.columnconfigure(2, weight=0)
         self.add_bookmark_page_number_var = tk.BooleanVar(value=False)
-        self.add_page_checkbox = tb.Checkbutton(frame, variable=self.add_page_var, bootstyle="primary-round-toggle")
         self.add_bookmark_page_number_checkbox = tb.Checkbutton(
             frame,
             variable=self.add_bookmark_page_number_var,
             bootstyle="primary-round-toggle",
+        )
+        self.add_bookmark_page_number_hint_label = tb.Label(
+            frame,
+            style="Hint.TLabel",
+            justify="left",
+            wraplength=self._px(220),
         )
         self.keep_pdf_extension_checkbox = tb.Checkbutton(
             frame,
@@ -936,7 +1014,7 @@ class FileSelectorApp:
         )
         collapse_row = tb.Frame(frame, style="Band.TFrame")
         self.add_bookmark_page_number_checkbox.grid(row=1, column=0, sticky="w", pady=self._px(3))
-        self.add_page_checkbox.grid(row=2, column=0, columnspan=3, sticky="w", pady=self._px(3))
+        self.add_bookmark_page_number_hint_label.grid(row=2, column=0, sticky="w", padx=self._pad(26, 0), pady=self._pad(0, 1))
         self.expand_all_checkbox.grid(row=3, column=0, sticky="w", pady=self._px(3))
         collapse_row.grid(row=4, column=0, columnspan=3, sticky="w", padx=self._pad(28, 0), pady=self._px(3))
         self.bookmark_open_level_label = tb.Label(collapse_row, style="Field.TLabel")
@@ -962,7 +1040,7 @@ class FileSelectorApp:
             to=maximum,
             increment=increment,
             textvariable=textvariable,
-            width=8,
+            width=6,
             justify="right",
         )
         spinbox._koji_var = textvariable
@@ -970,6 +1048,8 @@ class FileSelectorApp:
         spinbox._koji_min = minimum
         spinbox._koji_max = maximum
         spinbox.bind("<FocusOut>", lambda _event, widget=spinbox: self._normalize_spinbox(widget))
+        spinbox.bind("<KeyRelease>", lambda _event: self.window.after_idle(self._refresh_page_font_size_hint))
+        spinbox.configure(command=self._refresh_page_font_size_hint)
         return spinbox
 
     def _draw_run_button(self, hover=False):
@@ -990,6 +1070,19 @@ class FileSelectorApp:
         spinbox._koji_var.set(str(value))
         self._normalize_spinbox(spinbox)
 
+    def _points_to_mm(self, points):
+        return round(float(points) / POINTS_PER_MM, 2)
+
+    def _mm_to_points(self, mm):
+        return float(mm) * POINTS_PER_MM
+
+    def _margin_setting_mm(self, settings, new_key, legacy_key, default_value):
+        if new_key in settings:
+            return settings[new_key]
+        if legacy_key in settings:
+            return self._points_to_mm(settings[legacy_key])
+        return default_value
+
     def _normalize_spinbox(self, spinbox):
         try:
             value = float(spinbox._koji_var.get())
@@ -1000,6 +1093,7 @@ class FileSelectorApp:
             spinbox._koji_var.set(str(int(round(value))))
         else:
             spinbox._koji_var.set(f"{value:.2f}")
+        self._refresh_page_font_size_hint()
 
     def _set_language(self, language):
         self.language = language
@@ -1116,6 +1210,88 @@ class FileSelectorApp:
             "黒": "black",
         }
         return legacy_labels.get(selected, "red")
+
+    PAGE_NUMBER_POSITION_CODES = (
+        "top_left",
+        "top_center",
+        "top_right",
+        "bottom_left",
+        "bottom_center",
+        "bottom_right",
+    )
+
+    def _page_number_position_labels(self):
+        return PAGE_NUMBER_POSITION_LABELS.get(self.language, PAGE_NUMBER_POSITION_LABELS["en"])
+
+    def _page_number_position_display_values(self):
+        labels = self._page_number_position_labels()
+        return [labels[code] for code in self.PAGE_NUMBER_POSITION_CODES]
+
+    def _set_page_number_position_code(self, code):
+        labels = self._page_number_position_labels()
+        self.page_number_position_var.set(labels.get(code, labels["bottom_right"]))
+
+    def _current_page_number_position_code(self):
+        selected = self.page_number_position_var.get()
+        labels = self._page_number_position_labels()
+        for code, label in labels.items():
+            if selected == label:
+                return code
+        legacy_labels = {
+            "左上": "top_left",
+            "中央上": "top_center",
+            "右上": "top_right",
+            "左下": "bottom_left",
+            "中央下": "bottom_center",
+            "右下": "bottom_right",
+            "Top left": "top_left",
+            "Top center": "top_center",
+            "Top right": "top_right",
+            "Bottom left": "bottom_left",
+            "Bottom center": "bottom_center",
+            "Bottom right": "bottom_right",
+        }
+        return legacy_labels.get(selected, "bottom_right")
+
+    PAGE_NUMBER_FORMAT_CODES = (
+        "number",
+        "dash_number",
+        "number_total",
+        "p_number",
+        "no_number",
+        "bracket_number",
+        "page_number",
+        "page_of_total",
+    )
+
+    def _page_number_format_labels(self):
+        return PAGE_NUMBER_FORMAT_LABELS.get(self.language, PAGE_NUMBER_FORMAT_LABELS["en"])
+
+    def _page_number_format_display_values(self):
+        labels = self._page_number_format_labels()
+        return [labels[code] for code in self.PAGE_NUMBER_FORMAT_CODES]
+
+    def _set_page_number_format_code(self, code):
+        labels = self._page_number_format_labels()
+        self.page_number_format_var.set(labels.get(code, labels["number"]))
+
+    def _current_page_number_format_code(self):
+        selected = self.page_number_format_var.get()
+        labels = self._page_number_format_labels()
+        for code, label in labels.items():
+            if selected == label:
+                return code
+        legacy_labels = {
+            "1": "number",
+            "Page 1": "page_number",
+            "1 / 10": "number_total",
+            "Page 1 of 10": "page_of_total",
+            "p.1": "p_number",
+            "No.1": "no_number",
+            "- 1 -": "dash_number",
+            "【1】": "bracket_number",
+        }
+        return legacy_labels.get(selected, "number")
 
     BOOKMARK_VIEW_MODE_CODES = ("fit_page", "fit_width", "fit_height", "adjust")
 
@@ -1300,7 +1476,7 @@ class FileSelectorApp:
                 "create_short": "Run",
                 "not_selected": "Not selected",
                 "general_options": "Merge options",
-                "page_number_options": "Print page numbers at bottom right",
+                "page_number_options": "Page numbers",
                 "scale_options": "Bookmark view adjust",
                 "bookmark_options": "Bookmark display",
                 "asp_options": "Construction info-sharing (ASP)",
@@ -1319,25 +1495,32 @@ class FileSelectorApp:
                 "completion_title": "Done",
                 "completion_exit_message": "PDF creation is complete.\nExit the program?",
                 "error_title": "Error",
-                "add_bookmark_page_number": "Add page number",
-                "add_page": "Add page count",
+                "add_bookmark_page_number_and_count": "Add page no. + count",
+                "add_bookmark_page_number_and_count_hint": "Ex. [bookmark]_[page no.]_[page count]",
                 "keep_pdf_extension": "Keep .pdf",
-                "convert_office": "Convert Office, image, text/code files to PDF before merging",
+                "convert_office": "Convert non-PDF files before merging",
                 "convert_mail": "Convert .msg/.eml email and zip files to PDF",
                 "eml_encoding": "eml encoding",
                 "confirm_temp_folder_delete": "Confirm temp folder delete",
                 "ppt_slide_bookmarks": "Add PowerPoint slide bookmarks",
                 "resize_pdf": "Resize all PDFs to selected page size",
                 "save_mode": "Save Mode",
-                "error_check": "Error check",
-                "preflight_detail_repair": "Detailed check",
-                "preflight_confirm": "Step confirm",
+                "pdf_detail_check": "Check PDF details",
+                "pdf_detail_check_hint": (
+                    "Only for failed merges, broken PDFs, or final checks before submission."
+                ),
                 "asper_format": "Apply Dennoh ASPer bookmark name rules",
                 "add_pdf_page_numbers": "Add page numbers to merged PDF pages",
+                "page_number_position": "Position",
+                "page_number_format": "Format",
+                "page_start_page": "Start page",
                 "page_start_number": "Start number",
                 "page_font_size": "Font size",
-                "page_margin_right": "Right margin",
-                "page_margin_bottom": "Bottom margin",
+                "page_margin_right": "Right margin (mm)",
+                "page_margin_bottom": "Bottom margin (mm)",
+                "page_margin_left": "Left margin (mm)",
+                "page_margin_disabled": "N/A",
+                "page_margin_top": "Top margin (mm)",
                 "page_font": "Font",
                 "page_color": "Color",
                 "page_opacity": "Opacity",
@@ -1399,7 +1582,7 @@ class FileSelectorApp:
                 "create_short": "作成",
                 "not_selected": "未選択",
                 "general_options": "結合設定",
-                "page_number_options": "右下にページ番号を印字",
+                "page_number_options": "ページ番号印字",
                 "scale_options": "しおり表示位置補正",
                 "bookmark_options": "しおり表示",
                 "asp_options": "工事情報共有システム（ASP）",
@@ -1418,25 +1601,30 @@ class FileSelectorApp:
                 "completion_title": "完了",
                 "completion_exit_message": "PDFの作成が完了しました。\nプログラムを終了しますか。",
                 "error_title": "エラー",
-                "add_bookmark_page_number": "しおり名にページを追加",
-                "add_page": "しおり名に含まれるページ数を追加",
+                "add_bookmark_page_number_and_count": "しおり名にページ番号と含まれるページ数を追加",
+                "add_bookmark_page_number_and_count_hint": "例：[しおり名]_[ページ番号]_[含まれるページ数]",
                 "keep_pdf_extension": "しおり名に.pdfを残す",
-                "convert_office": "Word・Excel・PowerPoint・画像・テキスト/コードをPDFに変換してから結合",
+                "convert_office": "PDF以外のファイルをPDFに変換してから結合",
                 "convert_mail": "msg・emlメール及びzipファイルをPDF化する",
                 "eml_encoding": "eml文字コード",
                 "confirm_temp_folder_delete": "暫定フォルダ削除確認",
                 "ppt_slide_bookmarks": "PowerPointのスライドしおりを付ける",
                 "resize_pdf": "すべてのPDFを指定サイズに変更",
                 "save_mode": "保存方式",
-                "error_check": "エラーチェック",
-                "preflight_detail_repair": "詳細チェック",
-                "preflight_confirm": "逐次確認",
+                "pdf_detail_check": "PDFを詳しくチェック",
+                "pdf_detail_check_hint": "PDF結合に失敗して壊れたPDFが混ざっていそうな場合、提出前に念入りに確認したい場合にのみON",
                 "asper_format": "電脳ASPer用のしおり名に整える",
                 "add_pdf_page_numbers": "結合PDFの各ページにページ番号を追加",
+                "page_number_position": "配置",
+                "page_number_format": "表示形式",
+                "page_start_page": "開始ページ",
                 "page_start_number": "開始番号",
                 "page_font_size": "文字サイズ",
-                "page_margin_right": "右余白",
-                "page_margin_bottom": "下余白",
+                "page_margin_right": "右余白(mm)",
+                "page_margin_bottom": "下余白(mm)",
+                "page_margin_left": "左余白(mm)",
+                "page_margin_disabled": "無効",
+                "page_margin_top": "上余白(mm)",
                 "page_font": "フォント",
                 "page_color": "色",
                 "page_opacity": "不透明度",
@@ -1493,7 +1681,7 @@ class FileSelectorApp:
 
     def _sync_notice_wraplength(self, event=None):
         if event is None:
-            available_width = self.notice_label.winfo_width()
+            available_width = self.notice_lines_frame.winfo_width()
             if available_width <= 1:
                 self._sync_dynamic_wraplengths()
                 return
@@ -1501,7 +1689,7 @@ class FileSelectorApp:
             available_width = event.width - self._px(260)
 
         wraplength = max(self._px(300), available_width)
-        self.notice_label.configure(wraplength=wraplength)
+        self._set_notice_wraplength(wraplength)
 
     def _sync_dynamic_wraplengths(self, content_width=None):
         if content_width is None:
@@ -1511,16 +1699,59 @@ class FileSelectorApp:
 
         root_horizontal_padding = self._px(28)
         notice_panel_padding_and_icon = self._px(94)
-        notice_panel_preset_width = self._px(190)
+        notice_panel_preset_width = self._px(170)
         license_panel_padding = self._px(180)
         path_controls_width = self._px(250)
 
         inner_width = max(self._px(300), content_width - root_horizontal_padding)
         self.subtitle_label.configure(wraplength=max(self._px(300), inner_width - self._px(16)))
-        self.notice_label.configure(wraplength=max(self._px(300), inner_width - notice_panel_padding_and_icon - notice_panel_preset_width))
+        notice_wraplength = max(self._px(300), inner_width - notice_panel_padding_and_icon - notice_panel_preset_width)
+        self._set_notice_wraplength(notice_wraplength)
         self.license_notice_label.configure(wraplength=max(self._px(300), inner_width - license_panel_padding))
         self.folder_label.configure(wraplength=max(self._px(300), inner_width - path_controls_width))
         self.file_label.configure(wraplength=max(self._px(300), inner_width - path_controls_width))
+
+    def _set_notice_wraplength(self, wraplength):
+        text_wraplength = max(self._px(260), wraplength - self._px(16))
+        for _row, _bullet_label, text_label in getattr(self, "notice_line_widgets", []):
+            text_label.configure(wraplength=text_wraplength)
+
+    def _split_notice_line(self, line):
+        stripped = line.strip()
+        for marker in ("-", "・"):
+            if stripped.startswith(marker):
+                return marker, stripped[len(marker):].strip()
+        return "", stripped
+
+    def _set_notice_text(self, notice_text, font):
+        lines = [line for line in notice_text.splitlines() if line.strip()]
+        while len(self.notice_line_widgets) < len(lines):
+            row = tb.Frame(self.notice_lines_frame, style="Panel.TFrame")
+            row.columnconfigure(1, weight=1)
+            bullet_label = tb.Label(
+                row,
+                style="Notice.TLabel",
+                anchor="ne",
+                width=2,
+            )
+            text_label = tb.Label(
+                row,
+                style="Notice.TLabel",
+                justify="left",
+                wraplength=self._px(614),
+            )
+            bullet_label.grid(row=0, column=0, sticky="ne")
+            text_label.grid(row=0, column=1, sticky="w")
+            self.notice_line_widgets.append((row, bullet_label, text_label))
+
+        for index, (row, bullet_label, text_label) in enumerate(self.notice_line_widgets):
+            if index < len(lines):
+                bullet, text = self._split_notice_line(lines[index])
+                bullet_label.configure(text=bullet, font=font)
+                text_label.configure(text=text, font=font)
+                row.grid(row=index, column=0, sticky="ew", pady=self._pad(0, 1 if index < len(lines) - 1 else 0))
+            else:
+                row.grid_remove()
 
     def _apply_language(self):
         self.window.title(self._text("window_title"))
@@ -1529,9 +1760,8 @@ class FileSelectorApp:
         notice_text, license_notice_text = self._notice_parts()
         notice_font_size = 9
         license_font_size = 8
-        self.notice_label.configure(font=("Yu Gothic UI", notice_font_size, "bold"))
+        self._set_notice_text(notice_text, ("Yu Gothic UI", notice_font_size, "bold"))
         self.license_notice_label.configure(font=("Yu Gothic UI", license_font_size))
-        self.notice_label.configure(text=notice_text)
         self.license_notice_label.configure(text=license_notice_text)
         self.window.after_idle(self._sync_notice_wraplength)
         self.folder_button.configure(text=self._text("select_folder"))
@@ -1562,15 +1792,11 @@ class FileSelectorApp:
         self.scale_section_label.configure(text=self._text("scale_options"))
         self.bookmark_section_label.configure(text=self._text("bookmark_options"))
         self.asp_section_label.configure(text=self._text("asp_options"))
-        self.add_bookmark_page_number_checkbox.configure(text=self._text("add_bookmark_page_number"))
-        self.add_page_checkbox.configure(text=self._text("add_page"))
+        self.add_bookmark_page_number_checkbox.configure(text=self._text("add_bookmark_page_number_and_count"))
+        self.add_bookmark_page_number_hint_label.configure(text=self._text("add_bookmark_page_number_and_count_hint"))
         self.keep_pdf_extension_checkbox.configure(text=self._text("keep_pdf_extension"))
         self.convert_office_checkbox.configure(text=self._text("convert_office"))
         self.convert_mail_checkbox.configure(text=self._text("convert_mail"))
-        current_eml_encoding = self._current_eml_encoding_code()
-        self.eml_encoding_label.configure(text=self._text("eml_encoding"))
-        self.eml_encoding_combo.configure(values=self._eml_encoding_display_values())
-        self._set_eml_encoding_code(current_eml_encoding)
         self.confirm_temp_folder_delete_checkbox.configure(text=self._text("confirm_temp_folder_delete"))
         self.ppt_slide_bookmarks_checkbox.configure(text=self._text("ppt_slide_bookmarks"))
         self.resize_pdf_checkbox.configure(text=self._text("resize_pdf"))
@@ -1578,15 +1804,23 @@ class FileSelectorApp:
         self.save_mode_label.configure(text=self._text("save_mode"))
         self.save_mode_combo.configure(values=self._save_mode_display_values())
         self._set_save_mode_code(current_save_mode)
-        self.error_check_label.configure(text=self._text("error_check"))
-        self.preflight_detail_repair_checkbox.configure(text=self._text("preflight_detail_repair"))
-        self.preflight_confirm_checkbox.configure(text=self._text("preflight_confirm"))
+        self.preflight_detail_repair_checkbox.configure(text=self._text("pdf_detail_check"))
+        self.preflight_detail_repair_hint_label.configure(text=self._text("pdf_detail_check_hint"))
+        self._refresh_merge_option_layout()
         self.asper_format_checkbox.configure(text=self._text("asper_format"))
         self.add_pdf_page_numbers_checkbox.configure(text="")
+        current_page_number_position = self._current_page_number_position_code()
+        self.page_number_position_label.configure(text=self._text("page_number_position"))
+        self.page_number_position_combo.configure(values=self._page_number_position_display_values())
+        self._set_page_number_position_code(current_page_number_position)
+        current_page_number_format = self._current_page_number_format_code()
+        self.page_number_format_label.configure(text=self._text("page_number_format"))
+        self.page_number_format_combo.configure(values=self._page_number_format_display_values())
+        self._set_page_number_format_code(current_page_number_format)
+        self.page_start_page_label.configure(text=self._text("page_start_page"))
         self.page_start_number_label.configure(text=self._text("page_start_number"))
         self.page_font_size_label.configure(text=self._text("page_font_size"))
-        self.page_margin_right_label.configure(text=self._text("page_margin_right"))
-        self.page_margin_bottom_label.configure(text=self._text("page_margin_bottom"))
+        self._refresh_page_margin_controls()
         current_page_font = self._current_page_number_font_code()
         self.page_font_label.configure(text=self._text("page_font"))
         self.page_font_combo.configure(values=self._page_number_font_display_values())
@@ -2078,18 +2312,60 @@ class FileSelectorApp:
         state = "disabled" if self.expand_all_var.get() else "normal"
         self.collapse_spinbox.configure(state=state)
 
+    def _refresh_merge_option_layout(self):
+        if not self._widget_exists("merge_right_options_frame"):
+            return
+        self.merge_right_options_frame.grid_configure(padx=self._pad(12, 0), sticky="ne")
+        self.preflight_detail_repair_hint_label.configure(wraplength=self._px(165))
+
     def toggle_page_number_options(self):
         state = "normal" if self.add_pdf_page_numbers_var.get() else "disabled"
         for widget in (
+            self.page_number_position_combo,
+            self.page_number_format_combo,
+            self.page_start_page_spinbox,
             self.page_start_number_spinbox,
             self.page_font_size_spinbox,
-            self.page_margin_right_spinbox,
             self.page_margin_bottom_spinbox,
             self.page_font_combo,
             self.page_color_combo,
             self.page_opacity_spinbox,
         ):
             widget.configure(state=state if not isinstance(widget, tb.Combobox) else ("readonly" if state == "normal" else "disabled"))
+        self._refresh_page_margin_controls(state)
+
+    def _refresh_page_margin_controls(self, page_number_state=None):
+        if not self._widget_exists("page_margin_right_label"):
+            return
+        if page_number_state is None:
+            page_number_state = "normal" if self.add_pdf_page_numbers_var.get() else "disabled"
+
+        position = self._current_page_number_position_code()
+        if position.endswith("_left"):
+            x_label_key = "page_margin_left"
+            margin_x_state = page_number_state
+        elif position.endswith("_center"):
+            x_label_key = "page_margin_disabled"
+            margin_x_state = "disabled"
+        else:
+            x_label_key = "page_margin_right"
+            margin_x_state = page_number_state
+
+        y_label_key = "page_margin_top" if position.startswith("top_") else "page_margin_bottom"
+        self.page_margin_right_label.configure(text=self._text(x_label_key))
+        self.page_margin_bottom_label.configure(text=self._text(y_label_key))
+        self.page_margin_right_spinbox.configure(state=margin_x_state)
+        self.page_margin_bottom_spinbox.configure(state=page_number_state)
+        self._refresh_page_font_size_hint()
+
+    def _refresh_page_font_size_hint(self):
+        if not self._widget_exists("page_font_size_hint_label"):
+            return
+        try:
+            points = float(self.page_font_size_spinbox._koji_var.get())
+        except (ValueError, tk.TclError):
+            points = 0
+        self.page_font_size_hint_label.configure(text=f"{self._points_to_mm(points):g}mm")
 
     def toggle_office_options(self):
         state = "normal" if self.convert_office_var.get() else "disabled"
@@ -2105,8 +2381,7 @@ class FileSelectorApp:
         self.toggle_mail_options()
 
     def toggle_mail_options(self):
-        enabled = self.convert_office_var.get() and self.convert_mail_var.get()
-        self.eml_encoding_combo.configure(state="readonly" if enabled else "disabled")
+        pass
 
     def _refresh_option_states(self):
         office_state = "normal" if self.convert_office_var.get() else "disabled"
@@ -2122,22 +2397,27 @@ class FileSelectorApp:
         return {
             "convert_office": self.convert_office_var.get(),
             "convert_mail": self.convert_mail_var.get(),
-            "eml_encoding": self._current_eml_encoding_code(),
+            "eml_encoding": "auto",
             "ppt_slide_bookmarks": self.ppt_slide_bookmarks_var.get(),
             "confirm_temp_folder_delete": self.confirm_temp_folder_delete_var.get(),
             "resize_pdf": self.resize_pdf_var.get(),
             "resize_size": self.resize_size_var.get(),
             "preflight_detail_repair": self.preflight_detail_repair_var.get(),
-            "preflight_confirm": self.preflight_confirm_var.get(),
+            "preflight_confirm": self.preflight_detail_repair_var.get(),
             "save_mode": self._current_save_mode_code(),
             "add_bookmark_page_number": self.add_bookmark_page_number_var.get(),
-            "add_page": self.add_page_var.get(),
+            "add_page": self.add_bookmark_page_number_var.get(),
             "expand_all": self.expand_all_var.get(),
             "collapse_level": self._spinbox_value(self.collapse_spinbox),
             "keep_pdf_extension": self.keep_pdf_extension_var.get(),
             "add_pdf_page_numbers": self.add_pdf_page_numbers_var.get(),
+            "page_number_position": self._current_page_number_position_code(),
+            "page_number_format": self._current_page_number_format_code(),
+            "page_start_page": self._spinbox_value(self.page_start_page_spinbox),
             "page_start_number": self._spinbox_value(self.page_start_number_spinbox),
             "page_font_size": self._spinbox_value(self.page_font_size_spinbox),
+            "page_margin_x": self._spinbox_value(self.page_margin_right_spinbox),
+            "page_margin_y": self._spinbox_value(self.page_margin_bottom_spinbox),
             "page_margin_right": self._spinbox_value(self.page_margin_right_spinbox),
             "page_margin_bottom": self._spinbox_value(self.page_margin_bottom_spinbox),
             "page_font": self._current_page_number_font_code(),
@@ -2156,24 +2436,35 @@ class FileSelectorApp:
         values = {**DEFAULT_UI_SETTINGS, **(settings or {})}
         self.convert_office_var.set(bool(values["convert_office"]))
         self.convert_mail_var.set(bool(values["convert_mail"]))
-        self._set_eml_encoding_code(values["eml_encoding"])
         self.ppt_slide_bookmarks_var.set(bool(values["ppt_slide_bookmarks"]))
         self.confirm_temp_folder_delete_var.set(bool(values["confirm_temp_folder_delete"]))
         self.resize_pdf_var.set(bool(values["resize_pdf"]))
         self.resize_size_var.set(values["resize_size"] if values["resize_size"] in {"A3", "A4", "A5", "B4", "B5"} else "A4")
-        self.preflight_detail_repair_var.set(bool(values["preflight_detail_repair"]))
-        self.preflight_confirm_var.set(bool(values["preflight_confirm"]))
+        self.preflight_detail_repair_var.set(
+            bool(values["preflight_detail_repair"]) or bool(values["preflight_confirm"])
+        )
         self._set_save_mode_code(values["save_mode"])
-        self.add_bookmark_page_number_var.set(bool(values["add_bookmark_page_number"]))
-        self.add_page_var.set(bool(values["add_page"]))
+        self.add_bookmark_page_number_var.set(
+            bool(values["add_bookmark_page_number"]) or bool(values["add_page"])
+        )
         self.expand_all_var.set(bool(values["expand_all"]))
         self._set_spinbox_value(self.collapse_spinbox, values["collapse_level"])
         self.keep_pdf_extension_var.set(bool(values["keep_pdf_extension"]))
         self.add_pdf_page_numbers_var.set(bool(values["add_pdf_page_numbers"]))
+        raw_settings = settings or {}
+        self._set_page_number_position_code(values.get("page_number_position", "bottom_right"))
+        self._set_page_number_format_code(values.get("page_number_format", "number"))
+        self._set_spinbox_value(self.page_start_page_spinbox, values.get("page_start_page", 1))
         self._set_spinbox_value(self.page_start_number_spinbox, values["page_start_number"])
         self._set_spinbox_value(self.page_font_size_spinbox, values["page_font_size"])
-        self._set_spinbox_value(self.page_margin_right_spinbox, values["page_margin_right"])
-        self._set_spinbox_value(self.page_margin_bottom_spinbox, values["page_margin_bottom"])
+        self._set_spinbox_value(
+            self.page_margin_right_spinbox,
+            self._margin_setting_mm(raw_settings, "page_margin_x", "page_margin_right", values["page_margin_x"]),
+        )
+        self._set_spinbox_value(
+            self.page_margin_bottom_spinbox,
+            self._margin_setting_mm(raw_settings, "page_margin_y", "page_margin_bottom", values["page_margin_y"]),
+        )
         self._set_page_number_font_code(values["page_font"])
         self._set_page_number_color_code(values["page_color"])
         self._set_spinbox_value(self.page_opacity_spinbox, values["page_opacity"])
@@ -2294,7 +2585,7 @@ class FileSelectorApp:
 
     @property
     def add_page(self):
-        return self.add_page_var.get()
+        return self.add_bookmark_page_number_var.get()
 
     @property
     def convert_office(self):
@@ -2306,7 +2597,7 @@ class FileSelectorApp:
 
     @property
     def eml_encoding(self):
-        return self._current_eml_encoding_code()
+        return "auto"
 
     @property
     def confirm_temp_folder_delete(self):
@@ -2330,7 +2621,7 @@ class FileSelectorApp:
 
     @property
     def preflight_confirm(self):
-        return self.preflight_confirm_var.get()
+        return self.preflight_detail_repair_var.get()
 
     @property
     def save_options(self):
@@ -2351,11 +2642,18 @@ class FileSelectorApp:
 
     @property
     def page_number_options(self):
+        margin_x_points = self._mm_to_points(self._spinbox_value(self.page_margin_right_spinbox))
+        margin_y_points = self._mm_to_points(self._spinbox_value(self.page_margin_bottom_spinbox))
         return {
+            "position": self._current_page_number_position_code(),
+            "number_format": self._current_page_number_format_code(),
+            "start_page": self._spinbox_value(self.page_start_page_spinbox),
             "start_number": self._spinbox_value(self.page_start_number_spinbox),
             "font_size": self._spinbox_value(self.page_font_size_spinbox),
-            "margin_right": self._spinbox_value(self.page_margin_right_spinbox),
-            "margin_bottom": self._spinbox_value(self.page_margin_bottom_spinbox),
+            "margin_x": margin_x_points,
+            "margin_y": margin_y_points,
+            "margin_right": margin_x_points,
+            "margin_bottom": margin_y_points,
             "fontname": self._current_page_number_font_code(),
             "fill": PAGE_NUMBER_COLOR_VALUES[self._current_page_number_color_code()],
             "fill_opacity": self._spinbox_value(self.page_opacity_spinbox),
