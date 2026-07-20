@@ -51,6 +51,7 @@ import m44temp_convert as office_temp_convert
 import m45invalid_pdflist as pdf_validation
 import m46pdf_resize as pdf_resize
 import m47add_pagenum as pdf_page_numbers
+import m52launch_config as launch_config_loader
 
 
 class SourcePdfRepairedRetry(Exception):
@@ -644,14 +645,16 @@ def create_pdf(
     print(f"PDF作成が完了しました: {output_file_path}")
 
 
-def run_create_pdf_in_worker(progress_ui, create_pdf_args):
+def run_create_pdf_in_worker(progress_ui, create_pdf_args, worker_options=None):
     result = {"success": False, "error": None}
+    worker_options = worker_options or {}
 
     def worker():
         original_stdout = sys.stdout
         sys.stdout = gui.ProgressWriter(progress_ui, original_stdout)
         issue_report = create_pdf_args[-1] if create_pdf_args else None
         output_file_path = create_pdf_args[1] if len(create_pdf_args) > 1 else None
+        write_error_report_enabled = bool(worker_options.get("write_error_report", True))
         try:
             current_create_pdf_args = list(create_pdf_args)
             retry_count = 0
@@ -689,7 +692,7 @@ def run_create_pdf_in_worker(progress_ui, create_pdf_args):
             print("処理中にエラーが発生しました。")
             traceback.print_exc()
         finally:
-            if output_file_path:
+            if output_file_path and write_error_report_enabled:
                 try:
                     write_issue_report(output_file_path, issue_report)
                 except Exception as report_exc:
@@ -714,6 +717,17 @@ def run_create_pdf_in_worker(progress_ui, create_pdf_args):
 
 
 def main():
+    launch_config = None
+    if len(sys.argv) > 1:
+        config_path = sys.argv[1]
+        startup_log(f"Launch config argument received: {config_path}")
+        try:
+            launch_config = launch_config_loader.load_launch_config(config_path)
+        except launch_config_loader.LaunchConfigError as exc:
+            startup_log(f"Launch config error: {exc}")
+            print(str(exc))
+            sys.exit(1)
+
     (
         folder_path,
         output_file_path,
@@ -742,7 +756,7 @@ def main():
         expand_all,
         collapse_level,
         progress_ui,
-    ) = gui.select_folder_and_file()
+    ) = gui.select_folder_and_file(launch_config)
 
     if folder_path is None or output_file_path is None:
         print("キャンセルされたため、処理を中断します。")
@@ -782,12 +796,21 @@ def main():
         keep_pdf_extension,
         [],
     )
+    worker_options = {
+        "write_error_report": True,
+    }
+    if launch_config is not None:
+        worker_options.update(
+            {
+                "write_error_report": launch_config.write_error_report,
+            }
+        )
 
     while True:
         if progress_ui is not None:
             progress_ui.retry_requested = False
 
-        result = run_create_pdf_in_worker(progress_ui, create_pdf_args)
+        result = run_create_pdf_in_worker(progress_ui, create_pdf_args, worker_options)
 
         if progress_ui is None:
             break

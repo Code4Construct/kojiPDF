@@ -1459,7 +1459,7 @@ class FileSelectorApp:
         translations = {
             "en": {
                 "window_title": "kojiPDF - Built with Python by Code4Construct",
-                "title": "kojiPDF v2.3.1",
+                "title": "kojiPDF v2.4.0",
                 "subtitle": "Select a folder and output PDF file, then create a structured inspection PDF.",
                 "notice": (
                     "- Useful for creating paperless meeting materials with PDFs, organizing email data, and preparing construction document inspections (ASP support)\n"
@@ -1565,7 +1565,7 @@ class FileSelectorApp:
             },
             "ja": {
                 "window_title": "kojiPDF - Built with Python by Code4Construct",
-                "title": "kojiPDF v2.3.1",
+                "title": "kojiPDF v2.4.0",
                 "subtitle": "フォルダとPDF保存先を選択し、工事検査用PDFファイルを作成します。",
                 "notice": (
                     "・PDFを活用したペーパーレス会議資料の作成、メールデータ整理、工事書類検査（ASP対応）に役立ちます。\n"
@@ -2477,6 +2477,19 @@ class FileSelectorApp:
         self.asper_format_var.set(bool(values["asper_format"]))
         self._refresh_option_states()
 
+    def apply_launch_config(self, launch_config):
+        mode = getattr(launch_config, "mode", "")
+        if mode in BUILT_IN_PRESETS:
+            self.apply_ui_settings(BUILT_IN_PRESETS[mode])
+
+        self.apply_ui_settings(getattr(launch_config, "settings", {}) or {})
+        self.selected_folder = getattr(launch_config, "input_folder", None)
+        self.selected_file = getattr(launch_config, "output_pdf", None)
+        self.folder_text.set(self.selected_folder or self._text("not_selected"))
+        self.file_text.set(self.selected_file or self._text("not_selected"))
+        if self.selected_file:
+            self.show_temp_pdf_notice(self.selected_file, show_temp_folder=self.convert_office_var.get())
+
     def load_selected_preset(self):
         code = self._current_preset_code()
         if code == "none":
@@ -2692,9 +2705,13 @@ class FileSelectorApp:
         return self._spinbox_value(self.collapse_spinbox)
 
 
-def select_folder_and_file():
+def select_folder_and_file(launch_config=None):
     debug_log("select_folder_and_file started")
     selector = FileSelectorApp()
+    if launch_config is not None:
+        selector.apply_launch_config(launch_config)
+        if getattr(launch_config, "auto_start", False):
+            selector.window.after(0, selector.finish)
     selector.show()
     debug_log("Tkinter event loop ended")
 

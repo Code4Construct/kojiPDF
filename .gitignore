@@ -33,6 +33,12 @@ venv/
 .qodo/
 .gitignore
 
+# Connector generated working folders
+mock/outlook_*/
+mock/explorer_*/
+mock/outlook_output/
+mock/explorer_output/
+
 # Local planning/build notes
 Windowsアプリ化手順書.md
 整理計画.md

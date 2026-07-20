@@ -1,4 +1,4 @@
-# kojiPDF v2.3.1 - 日本語 / English
+# kojiPDF v2.4.0 - 日本語 / English
 
 ## 概要 / Overview
 
@@ -51,7 +51,11 @@ It converts PDFs, Microsoft Office files, emails, images, text files, and ZIP fi
 - **日本語 / 英語 GUI / Japanese and English UI**  
   GUI 表示を日本語と英語で切り替えできます。
 
-## v2.3.1 の主な変更 / Main Changes in v2.3.1
+- **JSON 起動 / JSON launch**  
+  JSON 設定ファイルを指定して、PowerShell などの外部スクリプトから kojiPDF を起動できます。  
+  kojiPDF can be launched from external scripts such as PowerShell by passing a JSON configuration file.
+
+## v2.4.0 の主な変更 / Main Changes in v2.4.0
 
 - 用途説明を、ペーパーレス会議資料、メールデータ整理、工事書類検査（ASP対応）向けに整理しました。  
   Updated the product description for paperless meeting materials, email data cleanup, and construction document inspections with ASP support.
@@ -62,8 +66,14 @@ It converts PDFs, Microsoft Office files, emails, images, text files, and ZIP fi
 - PDF 修復・圧縮、保存 warning の扱い、依存関係の説明を整理しました。  
   Clarified PDF repair/compression behavior, save-warning handling, and dependencies.
 
-- GUI 上のアプリ名表示を `kojiPDF v2.3.1` に更新しました。  
-  Updated the GUI title display to `kojiPDF v2.3.1`.
+- GUI 上のアプリ名表示を `kojiPDF v2.4.0` に更新しました。  
+  Updated the GUI title display to `kojiPDF v2.4.0`.
+
+- `kojiPDFv2.py config.json` / `kojiPDFv2.exe config.json` の JSON 起動に対応しました。  
+  Added JSON launch support with `kojiPDFv2.py config.json` and `kojiPDFv2.exe config.json`.
+
+- PowerShell などの外部スクリプトから JSON を生成して kojiPDF に渡せるようにしました。  
+  External scripts such as PowerShell can generate a JSON config and pass it to kojiPDF.
 
 ## 動作環境 / Requirements
 
@@ -89,6 +99,20 @@ pip install -r requirements.txt
 
 ```bash
 python kojiPDFv2.py
+```
+
+JSON 設定ファイルを指定して起動できます。  
+You can also launch kojiPDF with a JSON configuration file.
+
+```bash
+python kojiPDFv2.py config.json
+```
+
+exe ビルド後は次の形式で起動できます。  
+After building the exe, use:
+
+```bash
+kojiPDFv2.exe config.json
 ```
 
 ## プロジェクトリンク / Project Links

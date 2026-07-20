@@ -2,6 +2,12 @@
 
 This repository now consolidates the separate kojiPDF version repositories into the main `Code4Construct/kojiPDF` repository.
 
+## v2.4.0
+
+- Added JSON launch configuration support with `kojiPDFv2.py config.json` and `kojiPDFv2.exe config.json`.
+- Added support for launching kojiPDF from external scripts such as PowerShell by generating and passing a JSON config.
+- Updated build, installer, GUI, and documentation version labels to v2.4.0.
+
 ## v2.3.1 integrated release
 
 - Integrated the v1.5.0 changes from `Code4Construct/kojiPDFv150`.
