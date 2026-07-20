@@ -1459,7 +1459,7 @@ class FileSelectorApp:
         translations = {
             "en": {
                 "window_title": "kojiPDF - Built with Python by Code4Construct",
-                "title": "kojiPDF v2.3.0",
+                "title": "kojiPDF v2.3.1",
                 "subtitle": "Select a folder and output PDF file, then create a structured inspection PDF.",
                 "notice": (
                     "- Useful for creating paperless meeting materials with PDFs, organizing email data, and preparing construction document inspections (ASP support)\n"
@@ -1565,7 +1565,7 @@ class FileSelectorApp:
             },
             "ja": {
                 "window_title": "kojiPDF - Built with Python by Code4Construct",
-                "title": "kojiPDF v2.3.0",
+                "title": "kojiPDF v2.3.1",
                 "subtitle": "フォルダとPDF保存先を選択し、工事検査用PDFファイルを作成します。",
                 "notice": (
                     "・PDFを活用したペーパーレス会議資料の作成、メールデータ整理、工事書類検査（ASP対応）に役立ちます。\n"

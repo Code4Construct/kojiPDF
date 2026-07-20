@@ -2,15 +2,15 @@
 
 This repository now consolidates the separate kojiPDF version repositories into the main `Code4Construct/kojiPDF` repository.
 
-## v2.3.0 integrated release
+## v2.3.1 integrated release
 
 - Integrated the v1.5.0 changes from `Code4Construct/kojiPDFv150`.
 - Integrated the v2.0.0 changes from `Code4Construct/kojiPDFv200`.
-- Integrated the v2.3.0 changes from `Code4Construct/kojiPDFv210`.
+- Integrated the v2.3.1 changes from `Code4Construct/kojiPDFv210`.
 - Updated project links so the integrated project points back to `Code4Construct/kojiPDF`.
-- Updated the usage command to run `kojiPDFv2.py`, matching the v2.3.0 application entry point.
+- Updated the usage command to run `kojiPDFv2.py`, matching the v2.3.1 application entry point.
 
-## v2.3.0
+## v2.3.1
 
 - Added the v2 application entry point as `kojiPDFv2.py`.
 - Expanded the Windows build workflow and installer configuration.

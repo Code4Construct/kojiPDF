@@ -327,20 +327,7 @@ def run_fast_preflight_check(
         return
     if repairable:
         print("Source PDF warnings were found, but source repair is enabled only in compress mode.")
-
-    action = show_pdf_check_report(
-        title,
-        report
-        + "\n\n対象ファイルを削除・差し替え・修復してからやり直すことを推奨します。"
-        + "\n削除・差し替え等の対応が済んでいる場合のみ続行してください。",
-        actions=[
-            ("abort", "終了", "#D32F2F"),
-            ("continue", "続行（削除等の対応済み）", "#388E3C"),
-        ],
-    )
-    if action != "continue":
-        raise RuntimeError("高速な結合前チェックで問題が見つかったため処理を終了しました。")
-    print("Continuing after fast preflight PDF check problems by user choice.")
+        print("Continuing without confirmation because detailed PDF check is off.")
 
 
 def run_detail_preflight_repair(

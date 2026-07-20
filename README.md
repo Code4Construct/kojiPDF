@@ -1,4 +1,4 @@
-# kojiPDF v2.3.0 - 日本語 / English
+# kojiPDF v2.3.1 - 日本語 / English
 
 ## 概要 / Overview
 
@@ -51,7 +51,7 @@ It converts PDFs, Microsoft Office files, emails, images, text files, and ZIP fi
 - **日本語 / 英語 GUI / Japanese and English UI**  
   GUI 表示を日本語と英語で切り替えできます。
 
-## v2.3.0 の主な変更 / Main Changes in v2.3.0
+## v2.3.1 の主な変更 / Main Changes in v2.3.1
 
 - 用途説明を、ペーパーレス会議資料、メールデータ整理、工事書類検査（ASP対応）向けに整理しました。  
   Updated the product description for paperless meeting materials, email data cleanup, and construction document inspections with ASP support.
@@ -62,8 +62,8 @@ It converts PDFs, Microsoft Office files, emails, images, text files, and ZIP fi
 - PDF 修復・圧縮、保存 warning の扱い、依存関係の説明を整理しました。  
   Clarified PDF repair/compression behavior, save-warning handling, and dependencies.
 
-- GUI 上のアプリ名表示を `kojiPDF v2.3.0` に更新しました。  
-  Updated the GUI title display to `kojiPDF v2.3.0`.
+- GUI 上のアプリ名表示を `kojiPDF v2.3.1` に更新しました。  
+  Updated the GUI title display to `kojiPDF v2.3.1`.
 
 ## 動作環境 / Requirements
 
