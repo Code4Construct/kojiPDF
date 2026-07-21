@@ -555,6 +555,7 @@ def export_mail_file(mail_path: str | Path, work_root: str | Path, outlook=None,
 def create_outlook_application():
     try:
         import pythoncom
+        import win32timezone  # noqa: F401 - needed by pywin32 COM date conversion in packaged builds.
         import win32com.client
     except ImportError as exc:
         raise RuntimeError("pywin32 が必要です。`pip install pywin32` を実行してください。") from exc

@@ -549,6 +549,11 @@ def create_pdf(
 
     print("PDFファイルを結合しています。")
     output_pdf = pdf_merge.merge_pdfs_from_df(df, issue_report=issue_report)
+    if output_pdf.page_count == 0:
+        raise RuntimeError(
+            "結合できるPDFがありません。メール、ZIP、Officeファイルなどの変換に失敗していないか、"
+            "エラーレポートを確認してください。"
+        )
 
     if resize_pdf:
         print(f"PDFページを{resize_size}サイズに変更しています。")

@@ -10,6 +10,7 @@ python -m nuitka ^
   --jobs=1 ^
   --low-memory ^
   --enable-plugin=tk-inter ^
+  --include-module=win32timezone ^
   --noinclude-custom-mode=matplotlib:nofollow ^
   --noinclude-custom-mode=scipy:nofollow ^
   --noinclude-custom-mode=bs4:nofollow ^
