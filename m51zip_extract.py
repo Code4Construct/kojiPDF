@@ -60,8 +60,14 @@ def decoded_member_name(info: zipfile.ZipInfo) -> str:
     if info.flag_bits & 0x800:
         return info.filename
 
+    raw_name = info.filename.encode("cp437")
     try:
-        return info.filename.encode("cp437").decode("cp932")
+        return raw_name.decode("cp932")
+    except UnicodeError:
+        pass
+
+    try:
+        return raw_name.replace(b"/", b"\\").decode("cp932")
     except UnicodeError:
         return info.filename
 
