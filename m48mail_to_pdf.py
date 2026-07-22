@@ -217,20 +217,29 @@ def decode_part_text(part, preferred_encoding: str = "auto") -> str:
         except Exception:
             return ""
 
-    candidates = unique_texts(
+    explicit_candidates = unique_texts(
         [
             None if preferred_encoding == "auto" else preferred_encoding,
             part.get_content_charset(),
             *extract_declared_charsets(payload),
+        ]
+    )
+    for candidate in explicit_candidates:
+        try:
+            return payload.decode(candidate)
+        except (LookupError, UnicodeDecodeError):
+            continue
+
+    utf16_candidates = ["utf-16", "utf-16le", "utf-16be"] if looks_like_utf16(payload) else []
+    candidates = unique_texts(
+        [
             "utf-8-sig",
             "utf-8",
             "cp932",
             "shift_jis",
             "iso-2022-jp",
             "euc-jp",
-            "utf-16",
-            "utf-16le",
-            "utf-16be",
+            *utf16_candidates,
         ]
     )
 
@@ -264,6 +273,20 @@ def decode_part_text(part, preferred_encoding: str = "auto") -> str:
 def extract_declared_charsets(payload: bytes) -> list[str]:
     head = payload[:4096].decode("ascii", errors="ignore")
     return re.findall(r"charset\s*=\s*[\"']?([A-Za-z0-9._-]+)", head, flags=re.IGNORECASE)
+
+
+def looks_like_utf16(payload: bytes) -> bool:
+    if payload.startswith((b"\xff\xfe", b"\xfe\xff")):
+        return True
+
+    sample = payload[:512]
+    if len(sample) < 4:
+        return False
+
+    even_nuls = sample[0::2].count(0)
+    odd_nuls = sample[1::2].count(0)
+    pair_count = max(1, len(sample) // 2)
+    return even_nuls / pair_count > 0.25 or odd_nuls / pair_count > 0.25
 
 
 def unique_texts(values: Iterable[str | None]) -> list[str]:
