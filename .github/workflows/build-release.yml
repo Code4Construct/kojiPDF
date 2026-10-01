@@ -1,0 +1,88 @@
+name: Build and release public source
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-2022
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check publication contents
+        run: python tools/verify_publish.py
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install declared dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Check Python source
+        run: python -m compileall -q .
+      - name: Build with Nuitka
+        run: .\build_nuitka.bat
+      - name: Check release tag and package portable build
+        shell: pwsh
+        run: |
+          $version = (Get-Content VERSION -Raw).Trim()
+          if ($version -notmatch '^\d+\.\d+\.\d+$') { throw 'Invalid VERSION' }
+          if ('${{ github.ref_type }}' -eq 'tag' -and '${{ github.ref_name }}' -ne "v$version") {
+            throw 'Tag must match VERSION'
+          }
+          if (-not (Test-Path 'kojiPDFv2.dist/kojiPDFv2.exe')) { throw 'Missing Nuitka executable' }
+          $zip = "kojiPDF_Portable_$version.zip"
+          Compress-Archive -Path 'kojiPDFv2.dist/*' -DestinationPath $zip
+          (Get-FileHash -Algorithm SHA256 $zip).Hash.ToLowerInvariant() + "  $zip" |
+            Set-Content -Path SHA256SUMS.txt -Encoding ascii
+      - name: Attest released binary
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/attest@v4
+        with:
+          subject-path: kojiPDF_Portable_*.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kojiPDF-portable
+          path: |
+            kojiPDF_Portable_*.zip
+            SHA256SUMS.txt
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: kojiPDF-portable
+      - name: Prepare release notes
+        shell: bash
+        run: |
+          {
+            echo "Built from commit $GITHUB_SHA by GitHub Actions."
+            echo
+            echo 'SHA-256:'
+            echo '```'
+            cat SHA256SUMS.txt
+            echo '```'
+          } > release-notes.md
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          body_path: release-notes.md
+          files: |
+            kojiPDF_Portable_*.zip
+            SHA256SUMS.txt
+          fail_on_unmatched_files: true
