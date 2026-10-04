@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDialog, QDoubleSpinBox, QFileDialog,
     QGridLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QMessageBox,
     QPushButton, QScrollArea, QSpinBox, QVBoxLayout, QWidget, QPlainTextEdit, QProgressBar,
+    QSizePolicy,
 )
 
 from qt_dialog_bridge import QtDialogBridge
@@ -68,6 +69,31 @@ def _flag_pixmap(country):
     painter.end()
     pixmap.setDevicePixelRatio(2)
     return pixmap
+
+
+class ElidedStatusLabel(QLabel):
+    """Keep status text from imposing a minimum window width."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._full_text = ""
+        self.setTextFormat(Qt.TextFormat.PlainText)
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+
+    def setText(self, text):
+        self._full_text = text
+        self.setToolTip(text)
+        self._update_elision()
+
+    def _update_elision(self):
+        super().setText(self.fontMetrics().elidedText(
+            self._full_text, Qt.TextElideMode.ElideMiddle,
+            max(0, self.contentsRect().width()),
+        ))
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._update_elision()
 
 
 class ToggleCheckBox(QCheckBox):
@@ -458,7 +484,9 @@ class FileSelectorApp(QDialog):
 
         progress_group = QGroupBox()
         progress_layout = QVBoxLayout(progress_group)
-        self.progress_status = QLabel()
+        self.progress_heading = QLabel()
+        progress_layout.addWidget(self.progress_heading)
+        self.progress_status = ElidedStatusLabel()
         progress_layout.addWidget(self.progress_status)
         self.progress_elapsed = QLabel()
         progress_layout.addWidget(self.progress_elapsed)
@@ -674,7 +702,7 @@ class FileSelectorApp(QDialog):
         self.preset_reset.setToolTip(self._text("preset_reset_title"))
         self.cancel_button.setText("キャンセル" if self.language == "ja" else "Cancel")
         self.run_button.setText(self._text("create_short"))
-        self.progress_group.setTitle(self._text("progress_title"))
+        self.progress_heading.setText(self._text("progress_title"))
         self.retry_button.setText(self._text("create"))
         self._set_progress_step(self.progress_step_index)
         self._refresh_states()
