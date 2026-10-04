@@ -48,7 +48,15 @@ class ViewerLauncher(QObject):
 
     def eventFilter(self, watched, event):
         if watched is self._window and event.type() == QEvent.Type.Close:
-            watched.removeEventFilter(self)
-            self._window = None
-            QTimer.singleShot(0, self.viewer_closed.emit)
+            # MainWindow may ignore close while notes are saving or a user
+            # cancels the unsaved-sidecar dialog. Observe the final UI state.
+            QTimer.singleShot(0, lambda window=watched: self._after_close(window))
         return super().eventFilter(watched, event)
+
+    def _after_close(self, window):
+        from shiboken6 import isValid
+        if self._window is window and (not isValid(window) or not window.isVisible()):
+            if isValid(window):
+                window.removeEventFilter(self)
+            self._window = None
+            self.viewer_closed.emit()

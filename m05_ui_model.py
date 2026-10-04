@@ -336,7 +336,7 @@ TRANSLATIONS = {
                     "商用利用は可能ですが、改変・再配布・ネットワーク経由で提供する場合はソースコード公開が必要です。\n"
                     "この義務を遵守しない場合、AGPL-3.0に基づく利用許諾を受けられません。"
                 ),
-                "open_viewer": "kojiPDFviewerを起動",
+                "open_viewer": "kojiPDFviewer起動",
                 "select_folder": "フォルダ選択",
                 "output": "出力PDF",
                 "create": "PDFを作成",

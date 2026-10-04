@@ -8,15 +8,15 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+from contextlib import closing
 from dataclasses import dataclass
 
 import pymupdf
 
 from .parser import extract_document_sections, extract_mails
 
-MAIL_INDEX_VERSION = "3"
-DOCUMENT_INDEX_VERSION = "2"
-FULL_TEXT_PAGE_LIMIT = 2000
+MAIL_INDEX_VERSION = "4"
+DOCUMENT_INDEX_VERSION = "3"
 
 SCHEMA = """
 CREATE TABLE meta (
@@ -40,6 +40,7 @@ CREATE TABLE mails (
     start_page INTEGER,
     end_page INTEGER,
     body_text TEXT,
+    body_indexed INTEGER NOT NULL DEFAULT 0,
     preview TEXT,
     is_read INTEGER NOT NULL DEFAULT 0,
     toc_index INTEGER,
@@ -55,6 +56,12 @@ CREATE VIRTUAL TABLE mails_fts USING fts5(
 );
 
 CREATE TRIGGER mails_ai AFTER INSERT ON mails BEGIN
+    INSERT INTO mails_fts(rowid, subject, sender, to_addr, cc, attachments, body_text)
+    VALUES (new.id, new.subject, new.sender, new.to_addr, new.cc, new.attachments, new.body_text);
+END;
+CREATE TRIGGER mails_au AFTER UPDATE OF body_text ON mails BEGIN
+    INSERT INTO mails_fts(mails_fts, rowid, subject, sender, to_addr, cc, attachments, body_text)
+    VALUES ('delete', old.id, old.subject, old.sender, old.to_addr, old.cc, old.attachments, old.body_text);
     INSERT INTO mails_fts(rowid, subject, sender, to_addr, cc, attachments, body_text)
     VALUES (new.id, new.subject, new.sender, new.to_addr, new.cc, new.attachments, new.body_text);
 END;
@@ -75,6 +82,7 @@ CREATE TABLE sections (
     start_page INTEGER,
     end_page INTEGER,
     body_text TEXT,
+    body_indexed INTEGER NOT NULL DEFAULT 0,
     color_hex TEXT
 );
 
@@ -85,6 +93,12 @@ CREATE VIRTUAL TABLE sections_fts USING fts5(
 );
 
 CREATE TRIGGER sections_ai AFTER INSERT ON sections BEGIN
+    INSERT INTO sections_fts(rowid, title, body_text)
+    VALUES (new.id, new.title, new.body_text);
+END;
+CREATE TRIGGER sections_au AFTER UPDATE OF body_text ON sections BEGIN
+    INSERT INTO sections_fts(sections_fts, rowid, title, body_text)
+    VALUES ('delete', old.id, old.title, old.body_text);
     INSERT INTO sections_fts(rowid, title, body_text)
     VALUES (new.id, new.title, new.body_text);
 END;
@@ -99,6 +113,27 @@ def index_path_for(pdf_path: str, mode: str = "mail") -> str:
 def _pdf_signature(pdf_path: str) -> str:
     st = os.stat(pdf_path)
     return f"{st.st_size}:{int(st.st_mtime)}"
+
+
+def preserve_note_save_indexes(source, destination, old_pdf):
+    """Annotation-only saves do not change text, scope, read flags or FTS rows."""
+    old_signature = f"{old_pdf['size']}:{old_pdf['mtime_ns'] // 1_000_000_000}"
+    for mode in ("mail", "document"):
+        original = index_path_for(source, mode)
+        target = index_path_for(destination, mode)
+        if not os.path.isfile(original):
+            continue
+        with closing(sqlite3.connect(original)) as connection:
+            row = connection.execute("SELECT value FROM meta WHERE key='pdf_signature'").fetchone()
+            if not row or row[0] != old_signature:
+                continue
+            if os.path.normcase(os.path.realpath(source)) != os.path.normcase(os.path.realpath(destination)):
+                # SQLite backup also handles any committed WAL pages.
+                with closing(sqlite3.connect(target)) as saved:
+                    connection.backup(saved)
+        with closing(sqlite3.connect(target)) as connection:
+            with connection:
+                connection.execute("UPDATE meta SET value=? WHERE key='pdf_signature'", (_pdf_signature(destination),))
 
 
 def _existing_read_ids(db_path: str) -> set[int]:
@@ -116,12 +151,12 @@ def _existing_read_ids(db_path: str) -> set[int]:
         return set()
 
 
-def _build(pdf_path: str, db_path: str) -> None:
+def _build(pdf_path: str, db_path: str, include_body: bool = True) -> None:
     read_ids = _existing_read_ids(db_path)
     if os.path.exists(db_path):
         os.remove(db_path)
 
-    mails = extract_mails(pdf_path)
+    mails = extract_mails(pdf_path, include_body=include_body)
 
     conn = sqlite3.connect(db_path)
     try:
@@ -130,6 +165,8 @@ def _build(pdf_path: str, db_path: str) -> None:
             conn.execute("INSERT INTO meta(key, value) VALUES ('pdf_signature', ?)",
                          (_pdf_signature(pdf_path),))
             conn.execute("INSERT INTO meta(key, value) VALUES ('mode', 'mail')")
+            conn.execute("INSERT INTO meta(key, value) VALUES ('body_complete', ?)",
+                         ("1" if include_body else "0",))
             conn.execute("INSERT INTO meta(key, value) VALUES ('parser_version', ?)",
                          (MAIL_INDEX_VERSION,))
             conn.executemany(
@@ -154,18 +191,16 @@ def _build(pdf_path: str, db_path: str) -> None:
                     for m in mails
                 ],
             )
+            if include_body:
+                conn.execute("UPDATE mails SET body_indexed=1")
     finally:
         conn.close()
 
 
-def _build_document(pdf_path: str, db_path: str) -> None:
+def _build_document(pdf_path: str, db_path: str, include_body: bool = True) -> None:
     if os.path.exists(db_path):
         os.remove(db_path)
 
-    # Large image-heavy PDFs can spend minutes extracting every page. Keep the
-    # bookmark index usable; PDF page search still uses Qt's PDF search model.
-    with pymupdf.open(pdf_path) as document:
-        include_body = document.page_count <= FULL_TEXT_PAGE_LIMIT
     sections = extract_document_sections(pdf_path, include_body=include_body)
 
     conn = sqlite3.connect(db_path)
@@ -175,6 +210,8 @@ def _build_document(pdf_path: str, db_path: str) -> None:
             conn.execute("INSERT INTO meta(key, value) VALUES ('pdf_signature', ?)",
                          (_pdf_signature(pdf_path),))
             conn.execute("INSERT INTO meta(key, value) VALUES ('mode', 'document')")
+            conn.execute("INSERT INTO meta(key, value) VALUES ('body_complete', ?)",
+                         ("1" if include_body else "0",))
             conn.execute("INSERT INTO meta(key, value) VALUES ('parser_version', ?)",
                          (DOCUMENT_INDEX_VERSION,))
             conn.executemany(
@@ -187,11 +224,14 @@ def _build_document(pdf_path: str, db_path: str) -> None:
                     for s in sections
                 ],
             )
+            if include_body:
+                conn.execute("UPDATE sections SET body_indexed=1")
     finally:
         conn.close()
 
 
-def open_or_build(pdf_path: str, mode: str = "mail", force_rebuild: bool = False) -> str:
+def open_or_build(pdf_path: str, mode: str = "mail", force_rebuild: bool = False,
+                  defer_body: bool = False) -> str:
     """インデックスDBのパスを返す。必要なら(再)構築する。
 
     mode は "mail"(メール束PDF) か "document"(一般資料PDF、しおり階層閲覧)。
@@ -202,7 +242,7 @@ def open_or_build(pdf_path: str, mode: str = "mail", force_rebuild: bool = False
     builder = _build if mode == "mail" else _build_document
 
     if force_rebuild or not os.path.exists(db_path):
-        builder(pdf_path, db_path)
+        builder(pdf_path, db_path, include_body=not defer_body)
         return db_path
 
     try:
@@ -213,15 +253,17 @@ def open_or_build(pdf_path: str, mode: str = "mail", force_rebuild: bool = False
                     or (mode == "mail" and meta.get("parser_version") != MAIL_INDEX_VERSION)
                     or (mode == "document" and meta.get("parser_version") != DOCUMENT_INDEX_VERSION)):
                 conn.close()
-                builder(pdf_path, db_path)
+                builder(pdf_path, db_path, include_body=not defer_body)
                 return db_path
             if mode == "mail":
                 _migrate_is_read_column(conn)
         finally:
             conn.close()
     except sqlite3.DatabaseError:
-        builder(pdf_path, db_path)
+        builder(pdf_path, db_path, include_body=not defer_body)
 
+    if not defer_body and not body_index_complete(db_path):
+        complete_body_index(pdf_path, db_path, mode)
     return db_path
 
 
@@ -231,6 +273,80 @@ def _migrate_is_read_column(conn: sqlite3.Connection) -> None:
     if "is_read" not in columns:
         with conn:
             conn.execute("ALTER TABLE mails ADD COLUMN is_read INTEGER NOT NULL DEFAULT 0")
+
+
+def body_index_complete(db_path: str) -> bool:
+    with closing(sqlite3.connect(db_path)) as conn:
+        row = conn.execute("SELECT value FROM meta WHERE key='body_complete'").fetchone()
+        return bool(row and row[0] == "1")
+
+
+def mail_body_indexed(db_path: str, mail_id: int) -> bool:
+    with closing(sqlite3.connect(db_path)) as conn:
+        row = conn.execute("SELECT body_indexed FROM mails WHERE id=?", (mail_id,)).fetchone()
+        return bool(row and row[0])
+
+
+def complete_body_index(pdf_path: str, db_path: str, mode: str, progress=None, only_row_id=None):
+    """Fill pending rows in small commits without overwriting read state.
+
+    Runs in an isolated process in the Viewer; interrupted jobs resume pending rows.
+    """
+    from . import parser
+    table = "mails" if mode == "mail" else "sections"
+    conn = sqlite3.connect(db_path, timeout=10)
+    try:
+        signature = _pdf_signature(pdf_path)
+        saved = conn.execute("SELECT value FROM meta WHERE key='pdf_signature'").fetchone()
+        if not saved or saved[0] != signature:
+            raise ValueError("PDFが更新されたため索引を再作成してください")
+        rows = conn.execute(f"SELECT id, start_page, end_page FROM {table} WHERE body_indexed=0 ORDER BY id").fetchall()
+        total = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+        done = total - len(rows)
+        if only_row_id is not None:
+            rows = [row for row in rows if row[0] == only_row_id]
+        with pymupdf.open(pdf_path) as document:
+            if mode == "mail":
+                nodes = {}
+                def collect(node):
+                    nodes[node.toc_index] = node
+                    for child in node.children:
+                        collect(child)
+                for root in parser.build_toc_tree(document):
+                    collect(root)
+                details = dict((row[0], row[1:]) for row in conn.execute(
+                    "SELECT id, toc_index, is_mail FROM mails"))
+            else:
+                parent_ids = {row[0] for row in conn.execute("SELECT DISTINCT parent_id FROM sections WHERE parent_id IS NOT NULL")}
+            for row_id, start, end in rows:
+                skip = False
+                if mode == "mail":
+                    toc_index, is_mail = details[row_id]
+                    node = nodes.get(toc_index)
+                    body = parser._find_child(node, "本文") if node and is_mail else None
+                    if body:
+                        start, end = body.start_page, body.end_page
+                    skip = bool(not is_mail and node and node.children)
+                else:
+                    skip = row_id in parent_ids
+                text = "" if skip else "\n".join(document[number - 1].get_text()
+                    for number in range(max(1, start), min(document.page_count, end) + 1))
+                with conn:
+                    if mode == "mail":
+                        conn.execute("UPDATE mails SET body_text=?, preview=?, body_indexed=1 WHERE id=?",
+                                     (text, parser._extract_preview(text), row_id))
+                    else:
+                        conn.execute("UPDATE sections SET body_text=?, body_indexed=1 WHERE id=?", (text, row_id))
+                done += 1
+                if progress:
+                    progress(done, total)
+        if _pdf_signature(pdf_path) != signature:
+            raise ValueError("PDFが更新されたため索引を再作成してください")
+        with conn:
+            if conn.execute(f"SELECT COUNT(*) FROM {table} WHERE body_indexed=0").fetchone()[0] == 0:
+                conn.execute("INSERT OR REPLACE INTO meta(key,value) VALUES ('body_complete','1')")
+    finally:
+        conn.close()
 
 
 @dataclass

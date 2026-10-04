@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import math
 import os
+from pathlib import Path
 import re
 import sys
 import tempfile
@@ -21,6 +22,7 @@ from PySide6.QtCore import (
     QEvent,
     QModelIndex,
     QPointF,
+    QProcess,
     QRect,
     QSettings,
     QSize,
@@ -31,8 +33,6 @@ from PySide6.QtCore import (
     Signal,
 )
 from PySide6.QtGui import QAction, QBrush, QColor, QCursor, QDesktopServices, QDragEnterEvent, QDropEvent, QFont, QFontMetrics, QIcon, QImage, QKeySequence, QPainter, QPen, QPixmap, QShortcut, QStandardItem, QStandardItemModel
-from PySide6.QtPdf import QPdfDocument, QPdfLinkModel, QPdfSearchModel
-from PySide6.QtPdfWidgets import QPdfView
 from PySide6.QtPrintSupport import QPrintDialog, QPrinter
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -50,6 +50,7 @@ from PySide6.QtWidgets import (
     QMenu,
     QMessageBox,
     QPushButton,
+    QSizePolicy,
     QSplitter,
     QStatusBar,
     QStyle,
@@ -64,7 +65,9 @@ from PySide6.QtWidgets import (
 )
 
 from . import db, outlook_reply, parser
-from .large_view import LargePdfPageView
+from .pdf_view import PdfPageView, ZoomMode
+from .pdf_jobs import PdfJob
+from .sticky_ui import NotesController
 
 MAIL_ROLE = Qt.UserRole + 1
 SECTION_ROLE = Qt.UserRole + 1
@@ -72,7 +75,7 @@ HEADER_ROLE = Qt.UserRole + 3
 MAX_RECENT_FILES = 10
 
 MAIL_SEARCH_PLACEHOLDER = "件名・差出人・宛先・本文・添付ファイル名で検索  (Ctrl+F)"
-DOCUMENT_SEARCH_PLACEHOLDER = "しおりの見出し・本文で検索  (Ctrl+F)"
+DOCUMENT_SEARCH_PLACEHOLDER = "PDF本文で検索  (Ctrl+F)"
 
 AVATAR_PALETTE = [
     "#4C6EF5", "#F76707", "#2F9E44", "#E64980", "#7048E8",
@@ -736,36 +739,8 @@ class SectionItemDelegate(QStyledItemDelegate):
         painter.restore()
 
 
-def _render_pages_to_printer(document: QPdfDocument, printer: QPrinter, start_page: int, end_page: int):
-    """1始まりのページ範囲[start_page, end_page]をprinterへ描画する。BasePdfTab/PageRangeWindowで共有する。"""
-    painter = QPainter()
-    if not painter.begin(printer):
-        return
-    try:
-        page_rect = printer.pageRect(QPrinter.Unit.DevicePixel)
-        first = True
-        for page in range(start_page - 1, end_page):
-            if not first:
-                printer.newPage()
-            first = False
-
-            pt_size = document.pagePointSize(page)
-            if pt_size.width() <= 0 or pt_size.height() <= 0:
-                continue
-            scale = min(page_rect.width() / pt_size.width(), page_rect.height() / pt_size.height())
-            img_w = max(1, round(pt_size.width() * scale))
-            img_h = max(1, round(pt_size.height() * scale))
-            image = document.render(page, QSize(img_w, img_h))
-
-            x = round((page_rect.width() - img_w) / 2)
-            y = round((page_rect.height() - img_h) / 2)
-            painter.drawImage(x, y, image)
-    finally:
-        painter.end()
-
-
-def _render_large_pages_to_printer(pdf_path: str, printer: QPrinter,
-                                   start_page: int, end_page: int):
+def _render_pages_to_printer(pdf_path: str, printer: QPrinter,
+                             start_page: int, end_page: int):
     painter = QPainter()
     if not painter.begin(printer):
         return
@@ -778,32 +753,34 @@ def _render_large_pages_to_printer(pdf_path: str, printer: QPrinter,
                 page = document.load_page(page_number)
                 scale = min(page_rect.width() / page.rect.width,
                             page_rect.height() / page.rect.height)
-                scale = min(scale, math.sqrt(16_000_000 /
-                                             (page.rect.width * page.rect.height)))
-                pixmap = page.get_pixmap(matrix=pymupdf.Matrix(scale, scale),
-                                         colorspace=pymupdf.csRGB, alpha=False)
-                image = QImage(pixmap.samples, pixmap.width, pixmap.height,
-                               pixmap.stride, QImage.Format.Format_RGB888).copy()
-                x = (page_rect.width() - image.width()) // 2
-                y = (page_rect.height() - image.height()) // 2
-                painter.drawImage(x, y, image)
+                # Render bounded tiles at printer resolution, retaining the paper fit.
+                img_w, img_h = math.ceil(page.rect.width * scale), math.ceil(page.rect.height * scale)
+                origin_x = (page_rect.width() - img_w) / 2
+                origin_y = (page_rect.height() - img_h) / 2
+                for y in range(0, img_h, 1024):
+                    for x in range(0, img_w, 1024):
+                        clip = pymupdf.Rect(x / scale, y / scale,
+                            min(x + 1024, img_w) / scale, min(y + 1024, img_h) / scale) & page.rect
+                        pixmap = page.get_pixmap(matrix=pymupdf.Matrix(scale, scale),
+                            clip=clip, colorspace=pymupdf.csRGB, alpha=False)
+                        image = QImage(pixmap.samples, pixmap.width, pixmap.height,
+                            pixmap.stride, QImage.Format.Format_RGB888).copy()
+                        painter.drawImage(QPointF(origin_x + pixmap.x, origin_y + pixmap.y), image)
     finally:
         painter.end()
 
 
 def _render_pdf_thumbnail(path: str, width: int) -> "QPixmap | None":
     """PDFの1ページ目を指定幅の縮小画像にして返す(開始画面のサムネイル用)。失敗時はNone。"""
-    doc = QPdfDocument()
+    doc = None
     try:
-        doc.load(path)
-        if doc.pageCount() < 1:
+        doc = pymupdf.open(path)
+        if doc.page_count < 1 or doc.needs_pass:
             return None
-        pt_size = doc.pagePointSize(0)
-        if pt_size.width() <= 0 or pt_size.height() <= 0:
-            return None
-        scale = width / pt_size.width()
-        height = max(1, round(pt_size.height() * scale))
-        image = doc.render(0, QSize(width, height))
+        page = doc[0]
+        scale = width / page.rect.width
+        pix = page.get_pixmap(matrix=pymupdf.Matrix(scale, scale), colorspace=pymupdf.csRGB, alpha=False)
+        image = QImage(pix.samples, pix.width, pix.height, pix.stride, QImage.Format.Format_RGB888).copy()
         pixmap = QPixmap.fromImage(image)
         # 白いページが背景に溶け込んで境界が分からなくなるため、枠線を描画しておく
         painter = QPainter(pixmap)
@@ -815,7 +792,8 @@ def _render_pdf_thumbnail(path: str, width: int) -> "QPixmap | None":
     except Exception:  # noqa: BLE001
         return None
     finally:
-        doc.close()
+        if doc is not None:
+            doc.close()
 
 
 class RatioSplitter(QSplitter):
@@ -858,6 +836,7 @@ class PageNumberControl(QWidget):
         super().__init__(parent)
         self._current = -1
         self._total = 0
+        self.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Preferred)
         layout = QHBoxLayout(self)
         layout.setContentsMargins(4, 0, 4, 0)
         layout.setSpacing(4)
@@ -917,130 +896,6 @@ class PageNumberControl(QWidget):
         return super().eventFilter(watched, event)
 
 
-class LinkedPdfView(QPdfView):
-    """QPdfViewのページ座標で外部リンクを拾い、既定のアプリへ渡す。"""
-
-    def __init__(self, pdf_path: str, parent=None):
-        super().__init__(parent)
-        self.pdf_path = pdf_path
-        self.link_model = QPdfLinkModel(self)
-
-    def _link_at(self, position: QPointF):
-        document = self.document()
-        if document is None or document.pageCount() == 0:
-            return None
-
-        viewport = self.viewport().size()
-        margins = self.documentMargins()
-        resolution = QApplication.primaryScreen().logicalDotsPerInch() / 72.0
-        page_sizes = []
-        for page in range(document.pageCount()):
-            points = document.pagePointSize(page)
-            base = QSizeF(points * resolution).toSize()
-            if base.width() <= 0 or base.height() <= 0:
-                return None
-            if self.zoomMode() == QPdfView.ZoomMode.FitToWidth:
-                scale = (viewport.width() - margins.left() - margins.right()) / base.width()
-                size = base * scale
-            elif self.zoomMode() == QPdfView.ZoomMode.FitInView:
-                available = QSize(viewport.width() - margins.left() - margins.right(),
-                                  viewport.height() - self.pageSpacing())
-                size = base.scaled(available, Qt.AspectRatioMode.KeepAspectRatio)
-                scale = size.width() / base.width()
-            else:
-                scale = self.zoomFactor()
-                size = QSizeF(points * resolution * scale).toSize()
-            page_sizes.append((size, resolution * scale))
-
-        width = max(size.width() for size, _ in page_sizes) + margins.left() + margins.right()
-        y = margins.top() - self.verticalScrollBar().value()
-        for page, (size, scale) in enumerate(page_sizes):
-            x = (max(width, viewport.width()) - size.width()) // 2 - self.horizontalScrollBar().value()
-            if x <= position.x() < x + size.width() and y <= position.y() < y + size.height():
-                self.link_model.setPage(page)
-                point = QPointF((position.x() - x) / scale, (position.y() - y) / scale)
-                return self.link_model.linkAt(point), page, point
-            y += size.height() + self.pageSpacing()
-        return None
-
-    def _raw_file_path(self, page: int, point: QPointF) -> str | None:
-        """PDFの元バイト列から、文字化けしたファイルリンクを復元する。"""
-        with pymupdf.open(self.pdf_path) as pdf:
-            for link in pdf[page].get_links():
-                rect = link["from"]
-                if not (rect.x0 <= point.x() <= rect.x1 and rect.y0 <= point.y() <= rect.y1):
-                    continue
-                obj = pdf.xref_object(link["xref"])
-                match = re.search(r"/(?:URI|UF|F)\s*<([0-9A-Fa-f]+)>", obj)
-                if match is not None:
-                    raw = bytes.fromhex(match.group(1))
-                else:
-                    match = re.search(r"/(?:URI|UF|F)\s*\(((?:\\.|[^\\)])*)\)", obj)
-                    if match is None:
-                        continue
-                    literal = match.group(1).encode("latin-1")
-
-                    def unescape(m):
-                        escaped = m.group(1)
-                        if escaped[:1] in (b"\r", b"\n"):
-                            return b""
-                        if escaped[:1] in b"01234567":
-                            return bytes((int(escaped, 8),))
-                        return {b"n": b"\n", b"r": b"\r", b"t": b"\t",
-                                b"b": b"\b", b"f": b"\f"}.get(escaped, escaped)
-
-                    raw = re.sub(rb"\\([0-7]{1,3}|\r?\n|.)", unescape, literal)
-                encodings = ("utf-16",) if raw.startswith((b"\xfe\xff", b"\xff\xfe")) else (
-                    "utf-8", "cp932")
-                for encoding in encodings:
-                    try:
-                        decoded = raw.decode(encoding)
-                        break
-                    except UnicodeError:
-                        continue
-                else:
-                    continue
-                if decoded.startswith("file:"):
-                    return QUrl(decoded).toLocalFile()
-                return decoded
-        return None
-
-    def _open_external_link(self, url: QUrl, page: int, point: QPointF):
-        scheme = url.scheme().lower()
-        if scheme not in ("http", "https", "mailto", "file"):
-            return
-        if scheme == "file":
-            path = url.toLocalFile()
-            if not os.path.exists(os.path.join(os.path.dirname(self.pdf_path), path)):
-                try:
-                    raw_path = self._raw_file_path(page, point)
-                except (OSError, RuntimeError, ValueError):
-                    raw_path = None
-                if raw_path:
-                    path = raw_path
-            path = path.replace("¥", "\\")
-            if not os.path.isabs(path):
-                path = os.path.join(os.path.dirname(self.pdf_path), path)
-            path = os.path.abspath(path)
-            if not os.path.exists(path):
-                QMessageBox.warning(self, "リンク先が見つかりません", path)
-                return
-            url = QUrl.fromLocalFile(path)
-        if not QDesktopServices.openUrl(url):
-            QMessageBox.warning(self, "リンクを開けません", url.toString())
-
-    def mouseReleaseEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
-            hit = self._link_at(event.position())
-            # 外部リンクはpage=-1なので、QPdfLink.isValid()はFalseになる。
-            if hit is not None and not hit[0].url().isEmpty():
-                link, page, point = hit
-                self._open_external_link(link.url(), page, point)
-                event.accept()
-                return
-        super().mouseReleaseEvent(event)
-
-# --------------------------------------------------------- PDF表示・ページ送りの共通基底
 class BasePdfTab(QWidget):
     """PDF描画・ページ送り・印刷など、メール束PDF/一般資料PDFで共通する部分。"""
 
@@ -1054,49 +909,90 @@ class BasePdfTab(QWidget):
         self.current_query = ""
         self._syncing_selection = False  # ページ同期による選択変更中はジャンプを抑止するためのガード
 
-        with pymupdf.open(pdf_path) as source:
-            self._source_page_count = source.page_count
-        self._large_pdf = self._source_page_count > db.FULL_TEXT_PAGE_LIMIT
-        self.document = QPdfDocument(self)
-        self.search_model = QPdfSearchModel(self)
-        if self._large_pdf:
-            self.pdf_view = LargePdfPageView(pdf_path)
-        else:
-            self.document.statusChanged.connect(self._on_document_status)
-            self.search_model.setDocument(self.document)
-            self.pdf_view = LinkedPdfView(pdf_path)
-            self.pdf_view.setDocument(self.document)
-            self.pdf_view.link_model.setDocument(self.document)
-            self.pdf_view.setPageMode(QPdfView.PageMode.MultiPage)
-            self.pdf_view.setZoomMode(QPdfView.ZoomMode.FitToWidth)
-            self.pdf_view.setSearchModel(self.search_model)
+        self.pdf_view = PdfPageView(pdf_path)
+        self._index_job = PdfJob(self)
+        self._index_job.message.connect(self._on_index_message)
+        self._reply_job = PdfJob(self)
+        self._reply_handler = None
+        self._display_loaded = False
+        self._display_error = None
+        self._body_pending = False
+        self.pdf_view.renderFailed.connect(self._on_render_failed)
 
         self.pdf_view.pageNavigator().currentPageChanged.connect(self._on_page_changed)
+        self.pdf_view.searchMatchChanged.connect(self._sync_selection_to_page)
 
         self.pdf_view.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.pdf_view.customContextMenuRequested.connect(self._show_pdf_context_menu)
+        self.notes = NotesController(self)
 
-    def _on_document_status(self, status):
-        self.page_changed.emit()
+    def _add_pdf_and_notes(self, splitter):
+        self.notes_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.notes_splitter.addWidget(self.pdf_view)
+        self.notes_splitter.addWidget(self.notes.panel)
+        self.notes_splitter.setStretchFactor(0, 1)
+        self.notes_splitter.setStretchFactor(1, 0)
+        splitter.addWidget(self.notes_splitter)
+
+    def _on_render_failed(self, error):
         window = self.window()
-        if isinstance(window, MainWindow) and status == QPdfDocument.Status.Error:
-            window.status.showMessage(
-                f"Qt PDF 読み込みエラー: {self.document.error().name}")
+        if isinstance(window, QMainWindow):
+            window.statusBar().showMessage(f"ページ表示に失敗しました: {error}")
 
     def _load_display(self):
-        if self._large_pdf:
+        try:
+            if self._display_loaded:
+                self.pdf_view.reload_document()
+            self._display_loaded = True
             self.pdf_view.render_page()
-            return QPdfDocument.Error.None_
-        return self.document.load(self.pdf_path)
+            return True
+        except Exception as error:
+            self._display_error = str(error)
+            return False
 
     def close_pdf(self):
-        self.document.close()
-        if self._large_pdf:
-            self.pdf_view.close_document()
+        if self.notes is not None:
+            self.notes.close()
+        self._index_job.stop()
+        self._reply_job.stop()
+        self.pdf_view.close_document()
+
+    def _start_body_index(self):
+        self._index_job.stop()
+        self._body_pending = bool(self.db_path and not db.body_index_complete(self.db_path))
+        if self._body_pending:
+            try:
+                self._index_job.start("index", self.pdf_path, self.db_path, self.MODE)
+            except Exception as error:
+                self._on_index_message("error", str(error))
+
+    def _on_index_message(self, kind, value):
+        window = self.window()
+        current = isinstance(window, MainWindow) and window._current_tab() is self
+        if kind == "progress":
+            done, total = value
+            if current:
+                window.status.showMessage(f"本文索引を作成中: {done}/{total}件")
+        elif kind == "done":
+            self._body_pending = False
+            page = self.current_page()
+            self._syncing_selection = True
+            try:
+                self.refresh_list()
+            finally:
+                self._syncing_selection = False
+            self.pdf_view.pageNavigator().jump(page, QPointF())
+            self._sync_selection_to_page(page)
+            if current:
+                window.status.showMessage("本文索引の作成が完了しました", 5000)
+        elif kind == "error":
+            self.index_warning = f"本文索引を作成できませんでした: {value}"
+            if current:
+                window.status.showMessage(self.index_warning)
 
     @property
     def title(self) -> str:
-        return os.path.basename(self.pdf_path)
+        return os.path.basename(self.pdf_path) + ("＊" if self.notes and self.notes.pending else "")
 
     def set_zoom_mode(self, mode):
         self.pdf_view.setZoomMode(mode)
@@ -1116,6 +1012,12 @@ class BasePdfTab(QWidget):
         if not isinstance(window, QMainWindow) or not hasattr(window, "fullscreen_action"):
             return
         menu = QMenu(self)
+        copy_action = menu.addAction("コピー")
+        copy_action.setEnabled(bool(self.pdf_view.selected_text()))
+        copy_action.triggered.connect(self.pdf_view.copy_selection)
+        note_action = menu.addAction("書類レビューを表示")
+        note_action.triggered.connect(self.notes.show_panel)
+        menu.addSeparator()
         sidebar_visible = self.sidebar.isVisible()
         toggle_action = menu.addAction("しおり・メール一覧を隠す" if sidebar_visible else "しおり・メール一覧を表示")
         toggle_action.triggered.connect(window._toggle_sidebar)
@@ -1131,10 +1033,7 @@ class BasePdfTab(QWidget):
     def set_search(self, query: str):
         self.current_query = query
         self.refresh_list()
-        if self._large_pdf:
-            self.pdf_view.start_search(query)
-        else:
-            self.search_model.setSearchString(query)
+        self.pdf_view.start_search(query)
 
     # サブクラスで実装する
     def refresh_list(self):
@@ -1164,10 +1063,7 @@ class BasePdfTab(QWidget):
 
     def render_page_range_to_printer(self, printer: QPrinter, start_page: int, end_page: int):
         """1始まりのページ範囲[start_page, end_page]をprinterへ描画する(印刷ダイアログとは独立してテスト可能)。"""
-        if self._large_pdf:
-            _render_large_pages_to_printer(self.pdf_path, printer, start_page, end_page)
-        else:
-            _render_pages_to_printer(self.document, printer, start_page, end_page)
+        _render_pages_to_printer(self.pdf_path, printer, start_page, end_page)
 
     # --------------------------------------------------------------- 保存
     def save_page_range(self, start_page: int, end_page: int, suggested_name: str):
@@ -1191,7 +1087,7 @@ class BasePdfTab(QWidget):
 
     # --------------------------------------------------------- ページ移動
     def page_count(self) -> int:
-        return self._source_page_count if self._large_pdf else self.document.pageCount()
+        return self.pdf_view.page_count
 
     def current_page(self) -> int:
         return self.pdf_view.pageNavigator().currentPage()
@@ -1218,7 +1114,7 @@ class PageRangeWindow(QMainWindow):
     """一覧から切り離して1件(1メール、または資料PDFの1しおり区間)だけを表示する、独立した閲覧用ウィンドウ。
 
     元PDFから該当ページ範囲だけを一時ファイルへ抽出して表示する(メイン一覧の
-    QPdfDocumentと共有すると、双方のページ送りが干渉してしまうため)。ウィンドウを
+    独立した閲覧状態で表示する)。ウィンドウを
     閉じると一時ファイルは削除する。
     """
 
@@ -1238,19 +1134,21 @@ class PageRangeWindow(QMainWindow):
 
         fd, self._tmp_path = tempfile.mkstemp(suffix=".pdf", prefix="mailpdf_")
         os.close(fd)
-        parser.save_page_range(pdf_path, self._tmp_path, start_page, end_page)
-
-        self.document = QPdfDocument(self)
-        self.document.load(self._tmp_path)
-
-        self.pdf_view = QPdfView()
-        self.pdf_view.setDocument(self.document)
-        self.pdf_view.setPageMode(QPdfView.PageMode.MultiPage)
-        self.pdf_view.setZoomMode(QPdfView.ZoomMode.FitToWidth)
+        try:
+            parser.save_page_range(pdf_path, self._tmp_path, start_page, end_page)
+            self.pdf_view = PdfPageView(self._tmp_path, link_base_path=pdf_path)
+        except Exception:
+            os.remove(self._tmp_path)
+            raise
         self.setCentralWidget(self.pdf_view)
 
         self._build_toolbar()
         self.pdf_view.pageNavigator().currentPageChanged.connect(self._update_page_bar)
+        self.pdf_view.renderFailed.connect(lambda error: self.statusBar().showMessage(f"ページ表示に失敗しました: {error}"))
+        self.pdf_view.searchProgress.connect(lambda query, count, done:
+            self.statusBar().showMessage(f"本文検索: {count}箇所に一致（{'完了' if done else '検索中'}）"))
+        self.pdf_view.searchFailed.connect(lambda query, error:
+            self.statusBar().showMessage(f"本文検索に失敗しました: {error}"))
         self._update_page_bar()
 
         prev_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Left), self)
@@ -1267,8 +1165,8 @@ class PageRangeWindow(QMainWindow):
 
         toolbar.addWidget(QLabel("表示:"))
         zoom_combo = QComboBox()
-        zoom_combo.addItem("幅に合わせる", QPdfView.ZoomMode.FitToWidth)
-        zoom_combo.addItem("ページ全体", QPdfView.ZoomMode.FitInView)
+        zoom_combo.addItem("幅に合わせる", ZoomMode.FitToWidth)
+        zoom_combo.addItem("ページ全体", ZoomMode.FitInView)
         zoom_combo.currentIndexChanged.connect(
             lambda: self.pdf_view.setZoomMode(zoom_combo.currentData()))
         toolbar.addWidget(zoom_combo)
@@ -1293,6 +1191,20 @@ class PageRangeWindow(QMainWindow):
         toolbar.addSeparator()
         print_action = toolbar.addAction("印刷")
         print_action.triggered.connect(self._print)
+
+        toolbar.addSeparator()
+        self.search_box = QLineEdit()
+        self.search_box.setPlaceholderText("本文を検索（Enter / Shift+Enter）")
+        self.search_box.setClearButtonEnabled(True)
+        self.search_box.setMaximumWidth(300)
+        self.search_box.textChanged.connect(self.pdf_view.start_search)
+        self.search_box.returnPressed.connect(self.pdf_view.next_search_match)
+        toolbar.addWidget(self.search_box)
+        previous_match = QShortcut(QKeySequence("Shift+Return"), self.search_box)
+        previous_match.setContext(Qt.ShortcutContext.WidgetShortcut)
+        previous_match.activated.connect(self.pdf_view.previous_search_match)
+        find_shortcut = QShortcut(QKeySequence("Ctrl+F"), self)
+        find_shortcut.activated.connect(self.search_box.setFocus)
 
         if self._attachments:
             toolbar.addSeparator()
@@ -1320,15 +1232,15 @@ class PageRangeWindow(QMainWindow):
 
     def go_next_page(self):
         nav = self.pdf_view.pageNavigator()
-        if nav.currentPage() < self.document.pageCount() - 1:
+        if nav.currentPage() < self.pdf_view.page_count - 1:
             nav.jump(nav.currentPage() + 1, QPointF(0, 0))
 
     def _go_to_page(self, page_number: int):
-        if 1 <= page_number <= self.document.pageCount():
+        if 1 <= page_number <= self.pdf_view.page_count:
             self.pdf_view.pageNavigator().jump(page_number - 1, QPointF(0, 0))
 
     def _update_page_bar(self, *_args):
-        total = self.document.pageCount()
+        total = self.pdf_view.page_count
         current = self.pdf_view.pageNavigator().currentPage() if total > 0 else -1
         self.page_control.set_page(current, total)
         self.prev_page_button.setEnabled(total > 0 and current > 0)
@@ -1339,7 +1251,7 @@ class PageRangeWindow(QMainWindow):
 
     def _jump_to_attachment(self, original_start_page: int):
         local_page = original_start_page - self._start_page  # 抽出後PDFでの0始まりページ番号
-        if 0 <= local_page < self.document.pageCount():
+        if 0 <= local_page < self.pdf_view.page_count:
             self.pdf_view.pageNavigator().jump(local_page, QPointF(0, 0))
 
     def _print(self):
@@ -1348,17 +1260,11 @@ class PageRangeWindow(QMainWindow):
         dialog.setWindowTitle("印刷")
         if dialog.exec() != QPrintDialog.DialogCode.Accepted:
             return
-        _render_pages_to_printer(self.document, printer, 1, self.document.pageCount())
+        _render_pages_to_printer(self._tmp_path, printer, 1, self.pdf_view.page_count)
 
     def closeEvent(self, event):
         super().closeEvent(event)
-        # QPdfDocument.close()だけではpdfiumが一時ファイルのハンドルを保持し続け、
-        # 直後のos.remove()がWindowsで失敗する(WinError 32)ため、documentを明示的に
-        # 破棄してから削除する。
-        self.pdf_view.setDocument(None)
-        self.document.close()
-        self.document.deleteLater()
-        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        self.pdf_view.close_document()
         try:
             os.remove(self._tmp_path)
         except OSError:
@@ -1468,7 +1374,7 @@ class PdfTab(BasePdfTab):
         self.sidebar = left
         splitter.addWidget(left)
 
-        splitter.addWidget(self.pdf_view)
+        self._add_pdf_and_notes(splitter)
         splitter.setStretchFactor(0, 3)
         splitter.setStretchFactor(1, 7)
 
@@ -1478,10 +1384,11 @@ class PdfTab(BasePdfTab):
     def load(self, force_rebuild: bool = False, status_cb=None) -> bool:
         self.index_warning = None
         self.db_path = None
-        error = self._load_display()
-        if error != QPdfDocument.Error.None_:
+        self._index_job.stop()
+        self._reply_job.stop()
+        if not self._load_display():
             if status_cb:
-                status_cb(f"PDFを開けませんでした (Qt PDF: {error.name})")
+                status_cb(f"PDFを開けませんでした: {self._display_error}")
             return False
         self.page_changed.emit()
         QApplication.processEvents()
@@ -1489,7 +1396,7 @@ class PdfTab(BasePdfTab):
             status_cb("索引を作成中...")
         QApplication.processEvents()
         try:
-            self.db_path = db.open_or_build(self.pdf_path, mode=self.MODE, force_rebuild=force_rebuild)
+            self.db_path = db.open_or_build(self.pdf_path, mode=self.MODE, force_rebuild=force_rebuild, defer_body=True)
         except Exception as e:  # noqa: BLE001
             self.index_warning = f"PDFは表示できますが、索引を作成できませんでした: {e}"
             if status_cb:
@@ -1497,6 +1404,7 @@ class PdfTab(BasePdfTab):
             return True
 
         self._populate_scopes()
+        self._start_body_index()
         self.page_changed.emit()
         return True
 
@@ -1707,7 +1615,30 @@ class PdfTab(BasePdfTab):
                                        attachments=mail.attachment_list())
 
     def _create_outlook_reply(self, mail: "db.MailRow", reply_all: bool = False):
+        if self.db_path and not db.mail_body_indexed(self.db_path, mail.id):
+            self._reply_job.stop()
+            if self._reply_handler is not None:
+                self._reply_job.message.disconnect(self._reply_handler)
+            def received(kind, value):
+                if kind == "body":
+                    self._finish_outlook_reply(mail, value, reply_all)
+                elif kind == "error":
+                    QMessageBox.warning(self, "返信の作成に失敗しました", str(value))
+            self._reply_job.message.connect(received)
+            self._reply_handler = received
+            try:
+                self._reply_job.start("mail_body", self.pdf_path, self.db_path, mail.id)
+            except Exception as error:
+                QMessageBox.warning(self, "返信の作成に失敗しました", str(error))
+                return
+            window = self.window()
+            if isinstance(window, QMainWindow):
+                window.statusBar().showMessage("返信用のメール本文を読み込み中...")
+            return
         body_text = db.get_body_text(self.db_path, mail.id) if self.db_path else ""
+        self._finish_outlook_reply(mail, body_text, reply_all)
+
+    def _finish_outlook_reply(self, mail, body_text, reply_all):
         try:
             outlook_reply.create_reply_draft(mail, body_text, reply_all=reply_all)
         except Exception as e:  # noqa: BLE001
@@ -1770,7 +1701,7 @@ class DocumentPdfTab(BasePdfTab):
     """メール形式によらない、しおり付き結合PDFを階層ツリーで閲覧するタブ。
 
     しおりのタイトルをそのまま見出しとして表示し、ページ範囲はしおりの実際の位置から算出する。
-    検索時のみ、ヒットしたしおりをパンくず付きのフラット一覧に切り替える。
+    検索はPDF本文だけを対象とし、階層を保ったまま現在の表示場所を選択する。
     """
 
     MODE = "document"
@@ -1859,7 +1790,7 @@ class DocumentPdfTab(BasePdfTab):
         self.sidebar = left
         splitter.addWidget(left)
 
-        splitter.addWidget(self.pdf_view)
+        self._add_pdf_and_notes(splitter)
         splitter.setStretchFactor(0, 3)
         splitter.setStretchFactor(1, 7)
 
@@ -1870,10 +1801,11 @@ class DocumentPdfTab(BasePdfTab):
         self.index_warning = None
         self.db_path = None
         self._fallback_rows = []
-        error = self._load_display()
-        if error != QPdfDocument.Error.None_:
+        self._index_job.stop()
+        self._reply_job.stop()
+        if not self._load_display():
             if status_cb:
-                status_cb(f"PDFを開けませんでした (Qt PDF: {error.name})")
+                status_cb(f"PDFを開けませんでした: {self._display_error}")
             return False
         self.page_changed.emit()
         QApplication.processEvents()
@@ -1881,7 +1813,7 @@ class DocumentPdfTab(BasePdfTab):
             status_cb("索引を作成中...")
         QApplication.processEvents()
         try:
-            self.db_path = db.open_or_build(self.pdf_path, mode=self.MODE, force_rebuild=force_rebuild)
+            self.db_path = db.open_or_build(self.pdf_path, mode=self.MODE, force_rebuild=force_rebuild, defer_body=True)
         except Exception as e:  # noqa: BLE001
             self.index_warning = f"索引を保存できませんでした。PDF内のしおりを表示します: {e}"
             try:
@@ -1900,39 +1832,25 @@ class DocumentPdfTab(BasePdfTab):
             return True
 
         self.refresh_list()
+        self._start_body_index()
         self.page_changed.emit()
         return True
 
     def refresh_list(self):
-        query = self.current_query.strip()
-        if not self.db_path and not self._fallback_rows:
-            self._all_rows = []
-            self.model.set_tree([])
-            self._update_depth_controls()
-            return
-
-        if query:
-            rows = (db.search_sections(self.db_path, query) if self.db_path else
-                    [row for row in self._fallback_rows
-                     if query.casefold() in row.title.casefold()])
-            self.model.set_flat(rows)
-        else:
-            self._all_rows = (db.list_sections(self.db_path) if self.db_path else
-                              self._fallback_rows)
+        rows = (db.list_sections(self.db_path) if self.db_path else
+                self._fallback_rows)
+        # Body indexing and query changes must preserve the existing tree state.
+        if rows != self._all_rows or self.model.is_flat():
+            self._all_rows = list(rows)
             self.model.set_tree(self._all_rows)
             self._max_depth = max((row.level for row in self._all_rows), default=1)
             self._display_depth = min(self._display_depth, self._max_depth)
             self._apply_display_depth()
-
         self._update_depth_controls()
-
-        if not self.model.is_empty():
-            self.list_view.setCurrentIndex(self.model.index(0, 0))
-        else:
-            self.pdf_view.pageNavigator().jump(0, QPointF(0, 0))
+        self._sync_selection_to_page(self.current_page())
 
     def _set_display_depth(self, depth: int):
-        if self.current_query.strip() or not self._all_rows:
+        if not self._all_rows:
             return
         self._display_depth = min(max(1, depth), self._max_depth)
         self._apply_display_depth()
@@ -1946,16 +1864,15 @@ class DocumentPdfTab(BasePdfTab):
             self.list_view.expandToDepth(self._display_depth - 2)
 
     def _update_depth_controls(self):
-        searching = bool(self.current_query.strip())
-        available = bool(self._all_rows) and not searching
-        self.depth_label.setText("—" if searching else str(self._display_depth if self._all_rows else 0))
+        available = bool(self._all_rows)
+        self.depth_label.setText(str(self._display_depth if self._all_rows else 0))
         self.deeper_button.setEnabled(available and self._display_depth < self._max_depth)
         self.shallower_button.setEnabled(available and self._display_depth > 1)
         self.expand_button.setEnabled(available)
         self.collapse_button.setEnabled(available)
 
     def result_count(self) -> int:
-        return self.model.rowCount() if self.current_query.strip() else len(self._all_rows)
+        return len(self._all_rows)
 
     def _on_index_activated(self, index: QModelIndex, *_args):
         if not index.isValid() or self.model.is_empty():
@@ -1967,6 +1884,8 @@ class DocumentPdfTab(BasePdfTab):
             return
         self._chosen_scope_id = section.id
         self.pdf_view.pageNavigator().jump(section.start_page - 1, QPointF(0, 0))
+        if self.current_query.strip():
+            self.pdf_view.align_search_to_page(section.start_page - 1)
 
     def _on_index_double_clicked(self, index: QModelIndex):
         if not index.isValid() or self.model.is_empty():
@@ -2036,12 +1955,21 @@ class DocumentPdfTab(BasePdfTab):
         return best
 
     def _sync_selection_to_page(self, page: int):
-        if self.current_query.strip():
-            return  # 検索結果のフラット表示中は、ページ追従で一覧を組み替えない
         index = self._find_index_for_page(page)
-        while index is not None and index.parent().isValid() and not self.list_view.isExpanded(index.parent()):
-            index = index.parent()
-        if index is None or self.list_view.currentIndex() == index:
+        ancestor = index.parent() if index is not None else QModelIndex()
+        while ancestor.isValid():
+            if not self.list_view.isExpanded(ancestor):
+                index = ancestor
+            ancestor = ancestor.parent()
+        if index is None:
+            self._syncing_selection = True
+            try:
+                self.list_view.selectionModel().clear()
+            finally:
+                self._syncing_selection = False
+            return
+        if self.list_view.currentIndex() == index:
+            self.list_view.scrollTo(index)
             return
 
         self._syncing_selection = True
@@ -2277,11 +2205,21 @@ class MainWindow(QMainWindow):
 
         style = self.style()
 
+        self.creator_button = QToolButton()
+        self.creator_button.setText("kojiPDF起動")
+        self.creator_button.setToolTip("kojiPDFのPDF作成画面を開く")
+        self.creator_button.clicked.connect(self.open_creator)
+        toolbar.addWidget(self.creator_button)
+
         self.sidebar_button = QToolButton()
         self.sidebar_button.setText("一覧を隠す")
         self.sidebar_button.setToolTip("メール一覧・しおり一覧を切り替え (Ctrl+B)")
         self.sidebar_button.clicked.connect(self._toggle_sidebar)
         toolbar.addWidget(self.sidebar_button)
+        self.notes_button = QToolButton()
+        self.notes_button.setText("書類レビュー")
+        self.notes_button.setCheckable(True)
+        self.notes_button.clicked.connect(self._toggle_notes)
 
         open_action = QAction(style.standardIcon(QStyle.StandardPixmap.SP_DialogOpenButton),
                                "PDFを開く", self)
@@ -2319,16 +2257,58 @@ class MainWindow(QMainWindow):
         self.search_box.setMinimumWidth(220)
         self.search_box.setMaximumWidth(420)
         self.search_box.textChanged.connect(self.on_search_changed)
-        self.search_box.returnPressed.connect(self._next_large_search_result)
+        self.search_box.returnPressed.connect(self._next_pdf_search_result)
+        previous_match_shortcut = QShortcut(QKeySequence("Shift+Return"), self.search_box)
+        previous_match_shortcut.setContext(Qt.ShortcutContext.WidgetShortcut)
+        previous_match_shortcut.activated.connect(self._previous_pdf_search_result)
         toolbar.addWidget(self.search_box)
+
+        self.search_result_label = QLabel()
+        self.search_result_label.setObjectName("searchResultCounter")
+        self.search_result_label.setToolTip("表示中の一致箇所 / 一致件数（検索中は途中経過）")
+        self.search_result_action = toolbar.addWidget(self.search_result_label)
+        self.search_result_action.setVisible(False)
+
+        self.previous_search_button = QToolButton()
+        self.previous_search_button.setText("前表示")
+        self.previous_search_button.setToolTip("前の検索一致箇所を表示 (Shift+Enter)")
+        self.previous_search_button.setEnabled(False)
+        self.previous_search_button.clicked.connect(self._previous_pdf_search_result)
+        toolbar.addWidget(self.previous_search_button)
+
+        self.next_search_button = QToolButton()
+        self.next_search_button.setText("次表示")
+        self.next_search_button.setToolTip("次の検索一致箇所を表示 (Enter)")
+        self.next_search_button.setEnabled(False)
+        self.next_search_button.clicked.connect(self._next_pdf_search_result)
+        toolbar.addWidget(self.next_search_button)
 
         toolbar.addSeparator()
         toolbar.addWidget(QLabel(" PDF表示: "))
         self.zoom_combo = QComboBox()
-        self.zoom_combo.addItem("幅に合わせる", QPdfView.ZoomMode.FitToWidth)
-        self.zoom_combo.addItem("ページ全体", QPdfView.ZoomMode.FitInView)
+        self.zoom_combo.addItem("幅に合わせる", ZoomMode.FitToWidth)
+        self.zoom_combo.addItem("ページ全体", ZoomMode.FitInView)
         self.zoom_combo.currentIndexChanged.connect(self.on_zoom_mode_changed)
         toolbar.addWidget(self.zoom_combo)
+
+        self.pan_button = QToolButton()
+        self.pan_button.setText("手のひら")
+        hand_pixmap = QPixmap()
+        hand_pixmap.loadFromData(b'''<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 32 32">
+          <path d="M11 17V8a2 2 0 0 1 4 0v7V5a2 2 0 0 1 4 0v10V7a2 2 0 0 1 4 0v9V10a2 2 0 0 1 4 0v11c0 5-3 8-8 8h-2c-3 0-5-2-7-5l-5-7a2 2 0 0 1 3-3l3 3Z"
+            fill="#fff3dc" stroke="#34465b" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>''', "SVG")
+        self.pan_button.setIcon(QIcon(hand_pixmap))
+        self.pan_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+        self.pan_button.setAccessibleName("手のひら：PDFを移動")
+        self.pan_button.setCheckable(True)
+        self.pan_button.setToolTip("左ドラッグでPDFを移動（Spaceを押している間も移動できます）")
+        self.pan_button.clicked.connect(self._toggle_pan_mode)
+        toolbar.addWidget(self.pan_button)
+
+        spacer = QWidget()
+        spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        toolbar.addWidget(spacer)
 
         self.prev_page_button = QToolButton()
         self.prev_page_button.setText("◀")
@@ -2354,6 +2334,7 @@ class MainWindow(QMainWindow):
         self.fullscreen_action.setToolTip("全画面表示を切り替え (F11)")
         self.fullscreen_action.toggled.connect(self._on_fullscreen_toggled)
         toolbar.addAction(self.fullscreen_action)
+        toolbar.addWidget(self.notes_button)
 
         find_shortcut = QShortcut(QKeySequence("Ctrl+F"), self)
         find_shortcut.activated.connect(lambda: (self.search_box.setFocus(), self.search_box.selectAll()))
@@ -2377,6 +2358,20 @@ class MainWindow(QMainWindow):
         # QActionにぶら下げたショートカットだけでは復帰できなくなるため、ウィンドウ直付けのQShortcutにする。
         fullscreen_shortcut = QShortcut(QKeySequence("F11"), self)
         fullscreen_shortcut.activated.connect(self.fullscreen_action.toggle)
+
+    def open_creator(self):
+        project_dir = Path(__file__).resolve().parent.parent
+        if "__compiled__" in globals() or getattr(sys, "frozen", False):
+            program = sys.executable
+            arguments = []
+        else:
+            program = sys.executable
+            arguments = [str(project_dir / "kojiPDFv2.py")]
+        started, _ = QProcess.startDetached(program, arguments, str(project_dir))
+        if not started:
+            QMessageBox.warning(self, "kojiPDF起動", "kojiPDFを起動できませんでした。")
+            return
+        self.close()
 
     # --------------------------------------------------------- ドラッグ&ドロップ
     def dragEnterEvent(self, event: QDragEnterEvent):
@@ -2453,10 +2448,10 @@ class MainWindow(QMainWindow):
 
     # --------------------------------------------------------------- タブ管理
     def _find_tab_index(self, path: str) -> int:
-        path = os.path.abspath(path)
+        path = os.path.normcase(os.path.realpath(os.path.abspath(path)))
         for i in range(self.tabs.count()):
             tab = self.tabs.widget(i)
-            if isinstance(tab, BasePdfTab) and os.path.abspath(tab.pdf_path) == path:
+            if isinstance(tab, BasePdfTab) and os.path.normcase(os.path.realpath(os.path.abspath(tab.pdf_path))) == path:
                 return i
         return -1
 
@@ -2502,10 +2497,14 @@ class MainWindow(QMainWindow):
         if existing >= 0:
             tab = self.tabs.widget(existing)
         else:
-            mode = parser.detect_mode(path)
-            tab_cls = PdfTab if mode == "mail" else DocumentPdfTab
-            tab = tab_cls(path)
-            self._connect_large_search(tab)
+            try:
+                mode = parser.detect_mode(path)
+                tab_cls = PdfTab if mode == "mail" else DocumentPdfTab
+                tab = tab_cls(path)
+            except Exception as error:
+                self.status.showMessage(f"PDFを開けませんでした: {error}")
+                return
+            self._connect_pdf_search(tab)
             self.tabs.insertTab(self._plus_tab_index(), tab, tab.title)
 
         idx = self.tabs.indexOf(tab)
@@ -2522,15 +2521,15 @@ class MainWindow(QMainWindow):
             self._add_recent_file(path)
             if tab.page_count() == 0:
                 self.status.showMessage(
-                    f"PDFのページを読み込み中 (Qt PDF: {tab.document.status().name}, {tab.document.error().name})")
+                    "PDFに表示可能なページがありません")
             else:
                 unit = "件のメール" if isinstance(tab, PdfTab) else "件のしおり"
                 self.status.showMessage(
                     f"{tab.result_count()} {unit}を読み込みました{self._unread_suffix(tab)}", 5000)
             if tab.index_warning:
                 self.status.showMessage(tab.index_warning)
-            elif tab._large_pdf:
-                self.status.showMessage("大容量PDF：PyMuPDFで表示中。本文検索は入力後に開始します", 8000)
+            elif tab._body_pending:
+                self.status.showMessage("本文索引を作成中")
         self._update_controls_enabled()
         self._update_page_bar()
 
@@ -2554,6 +2553,15 @@ class MainWindow(QMainWindow):
         tab = self.tabs.widget(index)
         if tab is self._plus_widget:
             return  # 「+」タブは閉じるボタンが無いため通常は到達しないが、念のため保護する
+        if isinstance(tab, BasePdfTab):
+            if tab.notes.busy:
+                if not hasattr(self, "_pending_note_closes"):
+                    self._pending_note_closes = set()
+                self._pending_note_closes.add(tab)
+                self.status.showMessage("PDF保存の完了後にタブを閉じます")
+                return
+            if not tab.notes.can_close():
+                return
         self.tabs.removeTab(index)
         if isinstance(tab, BasePdfTab):
             tab.close_pdf()
@@ -2571,9 +2579,15 @@ class MainWindow(QMainWindow):
         old_tab = self._current_tab()
         if not isinstance(old_tab, BasePdfTab):
             return
+        if old_tab.notes.busy:
+            self.status.showMessage("PDF保存中は表示モードを切り替えられません")
+            return
         tab_cls = DocumentPdfTab if isinstance(old_tab, PdfTab) else PdfTab
-        new_tab = tab_cls(old_tab.pdf_path)
-        self._connect_large_search(new_tab)
+        try:
+            new_tab = tab_cls(old_tab.pdf_path)
+        except Exception as error:
+            self.status.showMessage(f"PDFを開けませんでした: {error}")
+            return
         new_tab.current_query = old_tab.current_query
         new_tab.set_zoom_mode(old_tab.pdf_view.zoomMode())
         if not new_tab.load(status_cb=self.status.showMessage):
@@ -2585,6 +2599,20 @@ class MainWindow(QMainWindow):
             new_tab.set_scope(scope_toc_index, include_descendants)
 
         page = old_tab.current_page()
+        panel_visible = not old_tab.notes.panel.isHidden()
+        new_tab.notes.close()
+        new_tab.notes.panel.setParent(None)
+        new_tab.notes.panel.deleteLater()
+        new_tab.notes.deleteLater()
+        session = old_tab.notes
+        session.detach()
+        old_tab.notes = None
+        new_tab.notes = session
+        session.attach(new_tab)
+        new_tab.notes_splitter.addWidget(session.panel)
+        if panel_visible:
+            session.show_panel()
+        self._connect_pdf_search(new_tab)
         index = self.tabs.indexOf(old_tab)
         title = self.tabs.tabText(index)
         tooltip = self.tabs.tabToolTip(index)
@@ -2595,6 +2623,8 @@ class MainWindow(QMainWindow):
         self.tabs.removeTab(self.tabs.indexOf(old_tab))
         old_tab.close_pdf()
         old_tab.deleteLater()
+        if new_tab.current_query:
+            new_tab.pdf_view.start_search(new_tab.current_query)
 
     def _unread_suffix(self, tab: BasePdfTab) -> str:
         count = tab.unread_count()
@@ -2622,7 +2652,6 @@ class MainWindow(QMainWindow):
         self.search_box.blockSignals(True)
         self.search_box.setText(tab.current_query)
         self.search_box.setPlaceholderText(
-            "しおり・本文を検索（Enterで次の一致ページ）" if tab._large_pdf else
             MAIL_SEARCH_PLACEHOLDER if isinstance(tab, PdfTab) else DOCUMENT_SEARCH_PLACEHOLDER)
         self.search_box.blockSignals(False)
 
@@ -2635,16 +2664,45 @@ class MainWindow(QMainWindow):
         tab.page_changed.connect(self._update_page_bar)
         self._page_synced_tab = tab
 
-        self.status.showMessage(f"{tab.result_count()} 件表示中{self._unread_suffix(tab)}")
+        suffix = " / 本文索引は作成中" if tab._body_pending else ""
+        self.status.showMessage(f"{tab.result_count()} 件表示中{self._unread_suffix(tab)}{suffix}")
         self._update_controls_enabled()
         self._update_page_bar()
         self._update_favorite_action()
 
+    def _toggle_pan_mode(self, checked):
+        tab = self._current_tab()
+        if isinstance(tab, BasePdfTab):
+            tab.pdf_view.set_pan_mode(checked)
+            tab.pdf_view.setFocus()
+
     def _update_controls_enabled(self):
         has_tab = isinstance(self._current_tab(), BasePdfTab)
-        self.search_box.setEnabled(has_tab)
-        self.zoom_combo.setEnabled(has_tab)
-        self.reindex_action.setEnabled(has_tab)
+        tab = self._current_tab()
+        interactive = has_tab and not tab.notes.busy
+        self.search_box.setEnabled(interactive)
+        self.zoom_combo.setEnabled(interactive)
+        self.pan_button.setEnabled(interactive)
+        self.pan_button.setChecked(has_tab and tab.pdf_view.pan_mode)
+        self.reindex_action.setEnabled(has_tab and not tab.notes.busy)
+        self.notes_button.setEnabled(has_tab)
+        self.notes_button.setChecked(has_tab and not tab.notes.panel.isHidden())
+        self._update_search_button()
+
+    def _update_search_button(self):
+        tab = self._current_tab()
+        has_query = isinstance(tab, BasePdfTab) and bool(tab.current_query.strip())
+        self.search_result_action.setVisible(has_query)
+        if has_query:
+            total = tab.pdf_view.search_result_count
+            current = tab.pdf_view.active_search_index + 1 if total else 0
+            suffix = "（検索中）" if not tab.pdf_view.search_done else ""
+            self.search_result_label.setText(f"{current} / {total}{suffix}")
+        else:
+            self.search_result_label.clear()
+        has_matches = has_query and not tab.notes.busy and tab.pdf_view.search_result_count > 0
+        self.previous_search_button.setEnabled(has_matches)
+        self.next_search_button.setEnabled(has_matches)
 
     def _update_page_bar(self):
         tab = self._current_tab()
@@ -2663,36 +2721,106 @@ class MainWindow(QMainWindow):
     def reindex_current(self):
         tab = self._current_tab()
         if isinstance(tab, BasePdfTab):
+            if tab.notes.busy or tab.notes.pending or tab.notes.unsaved:
+                self.status.showMessage("コメントをPDFに保存してから再インデックスしてください")
+                return
             self.load_pdf(tab.pdf_path, force_rebuild=True)
+            tab.notes.close()
+            tab.notes.panel.setParent(None)
+            tab.notes.panel.deleteLater()
+            tab.notes.deleteLater()
+            tab.notes = NotesController(tab)
+            tab.notes_splitter.addWidget(tab.notes.panel)
+            self._connect_notes(tab)
 
-    def _connect_large_search(self, tab):
-        if tab._large_pdf:
-            tab.pdf_view.searchProgress.connect(
-                lambda query, count, done, current_tab=tab:
-                self._on_large_search_progress(current_tab, query, count, done))
-            tab.pdf_view.searchFailed.connect(
-                lambda query, error, current_tab=tab:
-                self._on_large_search_failed(current_tab, query, error))
+    def _connect_pdf_search(self, tab):
+        self._connect_notes(tab)
+        tab.pdf_view.searchMatchChanged.connect(
+            lambda _page, current_tab=tab: self._update_search_button()
+            if self._current_tab() is current_tab else None)
+        tab.pdf_view.searchProgress.connect(
+            lambda query, count, done, current_tab=tab:
+            self._on_pdf_search_progress(current_tab, query, count, done))
+        tab.pdf_view.searchFailed.connect(
+            lambda query, error, current_tab=tab:
+            self._on_pdf_search_failed(current_tab, query, error))
 
-    def _on_large_search_progress(self, tab, query, count, done):
+    def _connect_notes(self, tab):
+        # A session is moved between modes, so bind to its current tab instead
+        # of capturing the widget that will be deleted after a mode switch.
+        session = tab.notes
+        if getattr(session, "_main_connected", False):
+            return
+        session._main_connected = True
+        session.changed.connect(lambda: self._notes_changed(session.tab))
+        session.pathChanged.connect(lambda old, new: self._notes_path_changed(session.tab, old, new))
+        session.saveFinished.connect(lambda ok: self._notes_save_finished(session.tab, ok))
+
+    def _notes_changed(self, tab):
+        index = self.tabs.indexOf(tab)
+        if index >= 0:
+            self.tabs.setTabText(index, tab.title)
+        if self._current_tab() is tab:
+            self._update_controls_enabled()
+
+    def _notes_path_changed(self, tab, old, new):
+        index = self.tabs.indexOf(tab)
+        if index >= 0:
+            self.tabs.setTabToolTip(index, new)
+        tab.db_path = db.index_path_for(new, tab.MODE) if os.path.exists(db.index_path_for(new, tab.MODE)) else None
+        self._add_recent_file(new)
+        self._update_favorite_action()
+
+    def _notes_save_finished(self, tab, success):
+        pending = getattr(self, "_pending_note_closes", set())
+        close_tab = tab in pending
+        pending.discard(tab)
+        if not success:
+            self._pending_note_window_close = False
+            return
+        if getattr(self, "_pending_note_window_close", False):
+            if not any(isinstance(self.tabs.widget(i), BasePdfTab) and self.tabs.widget(i).notes.busy
+                       for i in range(self.tabs.count())):
+                self._pending_note_window_close = False
+                QTimer.singleShot(0, self.close)
+        elif close_tab:
+            QTimer.singleShot(0, lambda: self._close_tab(self.tabs.indexOf(tab)))
+
+    def _toggle_notes(self):
+        tab = self._current_tab()
+        if isinstance(tab, BasePdfTab):
+            if tab.notes.panel.isHidden():
+                tab.notes.show_panel()
+            else:
+                tab.notes.hide_panel()
+
+    def _on_pdf_search_progress(self, tab, query, count, done):
         if self._current_tab() is tab and tab.current_query.strip() == query:
+            self._update_search_button()
             state = "完了" if done else "検索中"
-            self.status.showMessage(f"本文検索: {count}ページに一致 ({state})")
+            suffix = " / 本文索引は作成中" if tab._body_pending else ""
+            self.status.showMessage(f"本文検索: {count}箇所に一致 ({state}){suffix}")
 
-    def _on_large_search_failed(self, tab, query, error):
+    def _on_pdf_search_failed(self, tab, query, error):
         if self._current_tab() is tab and tab.current_query.strip() == query:
             self.status.showMessage(f"本文検索に失敗しました: {error}")
 
-    def _next_large_search_result(self):
+    def _next_pdf_search_result(self):
         tab = self._current_tab()
-        if isinstance(tab, BasePdfTab) and tab._large_pdf:
+        if isinstance(tab, BasePdfTab):
             tab.pdf_view.next_search_match()
+
+    def _previous_pdf_search_result(self):
+        tab = self._current_tab()
+        if isinstance(tab, BasePdfTab):
+            tab.pdf_view.previous_search_match()
 
     def on_search_changed(self, text: str):
         tab = self._current_tab()
         if isinstance(tab, BasePdfTab):
             tab.set_search(text)
-            if tab._large_pdf and text.strip():
+            self._update_search_button()
+            if text.strip():
                 self.status.showMessage("本文検索を開始します...")
                 return
             self.status.showMessage(f"{tab.result_count()} 件表示中{self._unread_suffix(tab)}")
@@ -2719,7 +2847,10 @@ class MainWindow(QMainWindow):
 
     def _on_escape_pressed(self):
         """全画面表示中はEscで解除、それ以外は検索ボックスをクリアする。"""
-        if self.page_control.input.hasFocus():
+        tab = self._current_tab()
+        if isinstance(tab, BasePdfTab) and tab.pdf_view.note_placement:
+            tab.pdf_view.set_note_placement(False)
+        elif self.page_control.input.hasFocus():
             self.page_control.cancel()
         elif self.isFullScreen():
             self.fullscreen_action.setChecked(False)
@@ -2755,6 +2886,16 @@ class MainWindow(QMainWindow):
             tab.set_sidebar_visible(self._sidebar_visible)
 
     def closeEvent(self, event):
+        pdf_tabs = [self.tabs.widget(i) for i in range(self.tabs.count())
+                    if isinstance(self.tabs.widget(i), BasePdfTab)]
+        if any(tab.notes.busy for tab in pdf_tabs):
+            self._pending_note_window_close = True
+            self.status.showMessage("PDF保存の完了後に終了します")
+            event.ignore()
+            return
+        if any(not tab.notes.can_close() for tab in pdf_tabs):
+            event.ignore()
+            return
         for index in range(self.tabs.count()):
             tab = self.tabs.widget(index)
             if isinstance(tab, BasePdfTab):
@@ -2828,6 +2969,8 @@ def _set_application_icon(app: QApplication):
 
 
 def main():
+    import multiprocessing
+    multiprocessing.freeze_support()
     app = QApplication(sys.argv)
     app.setApplicationName("kojiPDFviewer")
     _set_application_icon(app)

@@ -109,6 +109,8 @@ class FileSelectorApp(QDialog):
         self.viewer_launcher = ViewerLauncher(self)
         self.viewer_launcher.viewer_closed.connect(self._on_viewer_closed)
         self._waiting_for_viewer_close = False
+        self._viewer_handoff_requested = False
+        self._viewer_handoff_path = None
         self.progress_emitter = ProgressEmitter()
         self.progress_emitter.message.connect(self.append_progress)
         self._action_loop = None
@@ -868,7 +870,21 @@ class FileSelectorApp(QDialog):
         )
 
     def open_viewer(self):
+        if not self._progress_started and self.isModal():
+            # Do not create a sibling native window while exec() still owns
+            # application modality. select_folder_and_file launches it after
+            # the modal event loop and its native cleanup have returned.
+            self._viewer_handoff_requested = True
+            self._viewer_handoff_path = self.selected_file
+            QDialog.reject(self)
+            return
         self.viewer_launcher.open(self.selected_file)
+        if not self._progress_started:
+            # exec() makes the selector application-modal and blocks the
+            # sibling Viewer. End selection after a successful launch; main's
+            # wait_for_viewer_close() keeps their shared Qt process alive.
+            self.setModal(False)
+            QDialog.reject(self)
 
     def _on_viewer_closed(self):
         if self._waiting_for_viewer_close:
@@ -1065,7 +1081,20 @@ def select_folder_and_file(launch_config=None):
     quit_on_last_window = app.quitOnLastWindowClosed()
     app.setQuitOnLastWindowClosed(False)
     try:
-        selection_code = selector.exec()
+        while True:
+            selection_code = selector.exec()
+            if not selector._viewer_handoff_requested:
+                break
+            selector._viewer_handoff_requested = False
+            selector.setModal(False)
+            try:
+                selector.viewer_launcher.open(selector._viewer_handoff_path)
+            except Exception as error:
+                # Restore the selection screen if a Viewer couldn't be opened.
+                selector.show()
+                QMessageBox.critical(selector, selector._text("error_title"), str(error))
+                continue
+            break
     finally:
         app.setQuitOnLastWindowClosed(quit_on_last_window)
     if selection_code != QDialog.DialogCode.Accepted:

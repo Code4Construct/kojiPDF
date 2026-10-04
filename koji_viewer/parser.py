@@ -272,7 +272,7 @@ def _parse_title_datetime(name: str) -> tuple[datetime | None, str]:
     return None, name
 
 
-def extract_mails(pdf_path: str) -> list[Mail]:
+def extract_mails(pdf_path: str, include_body: bool = True) -> list[Mail]:
     doc = pymupdf.open(pdf_path)
     try:
         roots = build_toc_tree(doc)
@@ -294,7 +294,7 @@ def extract_mails(pdf_path: str) -> list[Mail]:
             body_start, body_end = ((body_node.start_page, body_node.end_page)
                                     if body_node else (start_page, end_page))
             body_start, body_end = max(1, body_start), min(doc.page_count, body_end)
-            body_text = "" if not is_mail and node.children else "\n".join(
+            body_text = "" if not include_body or (not is_mail and node.children) else "\n".join(
                 doc[p - 1].get_text() for p in range(body_start, body_end + 1))
             attach_node = _find_child(node, "添付") if is_mail else None
             if is_mail and header["添付ファイル"]:
