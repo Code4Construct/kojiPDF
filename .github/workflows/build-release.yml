@@ -32,6 +32,7 @@ jobs:
       - name: Build with Nuitka
         run: .\build_nuitka.bat
       - name: Check release tag and package portable build
+        id: version
         shell: pwsh
         run: |
           $version = (Get-Content VERSION -Raw).Trim()
@@ -40,18 +41,120 @@ jobs:
             throw 'Tag must match VERSION'
           }
           if (-not (Test-Path 'kojiPDFv2.dist/kojiPDFv2.exe')) { throw 'Missing Nuitka executable' }
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "APP_VERSION=$version" >> $env:GITHUB_ENV
           $zip = "kojiPDF_Portable_$version.zip"
           Compress-Archive -Path 'kojiPDFv2.dist/*' -DestinationPath $zip
           (Get-FileHash -Algorithm SHA256 $zip).Hash.ToLowerInvariant() + "  $zip" |
             Set-Content -Path SHA256SUMS.txt -Encoding ascii
+      - name: Install WiX Toolset
+        shell: pwsh
+        run: choco install wixtoolset --yes --no-progress
+
+      - name: Prepare MSI source folder
+        shell: pwsh
+        run: |
+          $source = "installer\msi-source"
+          New-Item -ItemType Directory -Path $source | Out-Null
+          Copy-Item "kojiPDFv2.dist\*" $source -Recurse
+
+      - name: Build MSI with WiX Toolset
+        shell: pwsh
+        run: |
+          function Find-WixTool($name) {
+            $command = Get-Command $name -ErrorAction SilentlyContinue
+            if ($command) {
+              return $command.Source
+            }
+
+            $roots = @(
+              "${env:ProgramFiles(x86)}",
+              "${env:ProgramFiles}"
+            ) | Where-Object { $_ -and (Test-Path $_) }
+
+            foreach ($root in $roots) {
+              $match = Get-ChildItem -Path $root -Filter $name -Recurse -ErrorAction SilentlyContinue |
+                Where-Object { $_.FullName -like "*WiX*" } |
+                Select-Object -First 1
+              if ($match) {
+                return $match.FullName
+              }
+            }
+
+            throw "WiX tool was not found: $name"
+          }
+
+          $heat = Find-WixTool "heat.exe"
+          $candle = Find-WixTool "candle.exe"
+          $light = Find-WixTool "light.exe"
+          Write-Host "Using heat: $heat"
+          Write-Host "Using candle: $candle"
+          Write-Host "Using light: $light"
+
+          New-Item -ItemType Directory -Force -Path "installer\output" | Out-Null
+          New-Item -ItemType Directory -Force -Path "installer\wixobj" | Out-Null
+          & $heat dir "installer\msi-source" `
+            -cg AppFiles `
+            -dr INSTALLFOLDER `
+            -srd `
+            -sreg `
+            -gg `
+            -var var.SourceDir `
+            -out "installer\HarvestedFiles.wxs"
+
+          if ($LASTEXITCODE -ne 0) { throw "WiX heat failed" }
+
+          & $candle `
+            -nologo `
+            -arch x64 `
+            -ext WixUIExtension `
+            -ext WixUtilExtension `
+            -dSourceDir="installer\msi-source" `
+            -dProjectDir="$pwd" `
+            -dAppVersion="$env:APP_VERSION" `
+            -out "installer\wixobj\" `
+            "installer\kojiPDF.wxs" `
+            "installer\HarvestedFiles.wxs"
+
+          if ($LASTEXITCODE -ne 0) { throw "WiX candle failed" }
+
+          & $light `
+            -nologo `
+            -ext WixUIExtension `
+            -ext WixUtilExtension `
+            -out "installer\output\kojiPDF_Setup_$env:APP_VERSION.msi" `
+            "installer\wixobj\kojiPDF.wixobj" `
+            "installer\wixobj\HarvestedFiles.wixobj"
+
+          if ($LASTEXITCODE -ne 0) { throw "WiX light failed" }
+          $msi = "installer/output/kojiPDF_Setup_$env:APP_VERSION.msi"
+          if (-not (Test-Path $msi)) { throw "Missing MSI" }
+          (Get-FileHash -Algorithm SHA256 $msi).Hash.ToLowerInvariant() + "  kojiPDF_Setup_$env:APP_VERSION.msi" |
+            Add-Content -Path SHA256SUMS.txt -Encoding ascii
+
       - name: Attest released binary
         if: startsWith(github.ref, 'refs/tags/v')
         uses: actions/attest@v4
         with:
-          subject-path: kojiPDF_Portable_*.zip
-      - uses: actions/upload-artifact@v4
+          subject-path: |
+            kojiPDF_Portable_*.zip
+            installer/output/kojiPDF_Setup_*.msi
+      - name: Upload Nuitka distribution
+        uses: actions/upload-artifact@v4
         with:
-          name: kojiPDF-portable
+          name: kojiPDF_${{ steps.version.outputs.version }}_nuitka_dist
+          path: kojiPDFv2.dist/
+          if-no-files-found: error
+      - name: Upload MSI installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: kojiPDF_Setup_${{ steps.version.outputs.version }}_msi
+          path: installer/output/kojiPDF_Setup_*.msi
+          if-no-files-found: error
+      - name: Upload portable ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: kojiPDF_Portable_${{ steps.version.outputs.version }}_zip
           path: |
             kojiPDF_Portable_*.zip
             SHA256SUMS.txt
@@ -66,7 +169,12 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: kojiPDF-portable
+          pattern: kojiPDF_Portable_*_zip
+          merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: kojiPDF_Setup_*_msi
+          merge-multiple: true
       - name: Prepare release notes
         shell: bash
         run: |
@@ -84,5 +192,6 @@ jobs:
           body_path: release-notes.md
           files: |
             kojiPDF_Portable_*.zip
+            kojiPDF_Setup_*.msi
             SHA256SUMS.txt
           fail_on_unmatched_files: true

@@ -6,3 +6,9 @@ __pycache__/
 build-report.xml
 *.pfx
 *.p12
+installer/msi-source/
+installer/wixobj/
+installer/output/
+installer/HarvestedFiles.wxs
+kojiPDF_Portable_*.zip
+SHA256SUMS.txt

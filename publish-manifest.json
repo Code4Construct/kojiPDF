@@ -9,6 +9,8 @@
     "assets/icons/smallicon_v2.ico",
     "assets/icons/smallicon_v2.png",
     "build_nuitka.bat",
+    "installer/kojiPDF.wxs",
+    "installer/license.rtf",
     "kojiPDFv2.py",
     "koji_viewer/__init__.py",
     "koji_viewer/assets/icons/kojiPDFviewer.ico",
