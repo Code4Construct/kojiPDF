@@ -4,6 +4,12 @@ This repository now consolidates the separate kojiPDF version repositories into 
 
 ## Unreleased
 
+- Ported the browser-style Viewer layout from the withdrawn kojiPDFviewer v0.4.0 change while keeping the toolbar: page navigation, fit mode, hand tool, and fullscreen now sit above the PDF; list switching and display settings sit above the list; the count sits below it.
+- Added mail list and bookmark list display settings (card or one-line layout, sort order, grouping by subject, visible fields, font size, density), saved automatically.
+- Moved favorites to a ☆/★ button on each tab and added reindexing and recent PDFs to the tab context menu.
+- Detected plain-text URLs and email addresses in the PDF body as links, and highlighted links on hover with the target in the tooltip and status bar.
+- Kept the visible page position when switching fit mode, resizing, hiding the list, or entering and leaving fullscreen.
+- Restored the window size and list visibility after leaving fullscreen.
 - Added a Viewer toolbar button to launch kojiPDF and close the Viewer after successful launch.
 - Shortened the Japanese Viewer launch button label to kojiPDFviewer起動.
 - Increased PDF mouse-wheel scrolling to 12 times the previous amount and added Ctrl+wheel zoom.
