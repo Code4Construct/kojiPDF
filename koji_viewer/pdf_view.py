@@ -9,9 +9,15 @@ from enum import IntEnum
 import pymupdf
 from PySide6.QtCore import QObject, QPointF, QRectF, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QColor, QDesktopServices, QImage, QKeySequence, QPainter, QPen, QPolygonF
-from PySide6.QtWidgets import QAbstractScrollArea, QApplication, QMenu, QMessageBox, QToolTip
+from PySide6.QtWidgets import QAbstractScrollArea, QApplication, QMainWindow, QMenu, QMessageBox, QToolTip
 
 from .pdf_jobs import PdfJob, TileRenderer
+
+# 本文に文字として書かれているだけのURL・メールアドレス(PDFにリンクとして埋め込まれていないもの)
+_TEXT_LINK_RE = re.compile(
+    r"(?P<url>(?:https?://|www\.)[A-Za-z0-9\-._~:/?#\[\]@!$&'*+,;=%]+)"
+    r"|(?P<mail>[A-Za-z0-9._%+\-]+@[A-Za-z0-9\-]+(?:\.[A-Za-z0-9\-]+)+)")
+_OPENABLE_SCHEMES = ("http", "https", "mailto", "file")
 
 
 class ZoomMode(IntEnum):
@@ -84,6 +90,9 @@ class PdfPageView(QAbstractScrollArea):
         self._failed_tiles = set()
         self._render_error = None
         self._chars_cache = OrderedDict()
+        self._links_cache = OrderedDict()
+        self._hover_link = None  # (ページ番号, リンク) マウスが乗っているリンク
+        self.background_color = QColor("#808080")
         self._selection = None
         self._press = None
         self.pan_mode = False
@@ -126,10 +135,34 @@ class PdfPageView(QAbstractScrollArea):
         return self._zoom_mode
 
     def setZoomMode(self, mode):
+        anchor = self._view_anchor()
         self._zoom_mode = ZoomMode(int(mode))
         self._zoom_factor = 1.0
         self._layout_pages()
-        self._navigator.jump(self._navigator.currentPage())
+        self._restore_anchor(anchor)
+
+    def _view_anchor(self):
+        """いま画面の上端にあるページと、そのページ内の位置(0=上端〜1=下端)。"""
+        if not self._offsets:
+            return None
+        number = self._navigator.currentPage()
+        height = self._sizes[number][1] * self._scales[number]
+        fraction = (self.verticalScrollBar().value() - self._offsets[number]) / max(1.0, height)
+        return number, min(1.0, max(0.0, fraction))
+
+    def _restore_anchor(self, anchor):
+        if anchor is None or not self._offsets:
+            return
+        number, fraction = anchor
+        number = min(number, self.page_count - 1)
+        if self._zoom_mode == ZoomMode.FitInView:
+            fraction = 0.0  # ページ全体表示では、そのページがちょうど画面に収まるよう上端に合わせる
+        height = self._sizes[number][1] * self._scales[number]
+        self._jumping = True
+        self.verticalScrollBar().setValue(round(self._offsets[number] + fraction * height))
+        self._jumping = False
+        self._navigator._set_page(number)
+        self.viewport().update()
 
     def page_offset(self, number):
         return self._offsets[number]
@@ -180,10 +213,11 @@ class PdfPageView(QAbstractScrollArea):
             scrollbar.setSingleStep(original_step)
 
     def resizeEvent(self, event):
+        # ウインドウの大きさ・一覧の表示/非表示・全画面の切り替えで、見ていた位置を保つ
+        anchor = self._view_anchor()
         super().resizeEvent(event)
-        page = self._navigator.currentPage()
         self._layout_pages()
-        self._navigator.jump(page)
+        self._restore_anchor(anchor)
 
     def scrollContentsBy(self, dx, dy):
         self.viewport().update()
@@ -272,7 +306,7 @@ class PdfPageView(QAbstractScrollArea):
     def paintEvent(self, event):
         painter = QPainter(self.viewport())
         painter.setClipRegion(event.region())
-        painter.fillRect(self.viewport().rect(), QColor("#808080"))
+        painter.fillRect(self.viewport().rect(), self.background_color)
         if self._document is None or not self._offsets:
             return
         top = self.verticalScrollBar().value()
@@ -321,6 +355,17 @@ class PdfPageView(QAbstractScrollArea):
                     painter.setBrush(QColor(70, 135, 240, 100))
                     for char in chars[begin:finish + 1]:
                         painter.drawRect(self._overlay_rect(number, char[1]))
+            if self._hover_link is not None and self._hover_link[0] == number:
+                painter.save()
+                painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+                for bbox in self._hover_link[1]["rects"]:
+                    box = self._overlay_rect(number, bbox).adjusted(-1, -1, 1, 1)
+                    painter.setPen(Qt.PenStyle.NoPen)
+                    painter.setBrush(QColor(37, 99, 235, 36))
+                    painter.drawRoundedRect(box, 2, 2)
+                    painter.setPen(QPen(QColor(37, 99, 235, 230), 1.5))
+                    painter.drawLine(box.bottomLeft(), box.bottomRight())
+                painter.restore()
             for note in self._notes_by_page.get(number, ()):
                 box = self._note_rect(note)
                 if note["id"] == self._highlight_note:
@@ -561,6 +606,7 @@ class PdfPageView(QAbstractScrollArea):
             return
         if self.pan_mode or self._space_pressed:
             QToolTip.hideText()
+            self._set_hover_link(None)
             self._update_pan_cursor()
             return
         if self.note_placement:
@@ -570,6 +616,7 @@ class PdfPageView(QAbstractScrollArea):
             return
         note = self.note_at(event.position())
         if note and not event.buttons():
+            self._set_hover_link(None)
             self.viewport().setCursor(Qt.CursorShape.PointingHandCursor)
             QToolTip.showText(event.globalPosition().toPoint(), html.escape(note["text"][:200]), self.viewport())
             return
@@ -586,9 +633,33 @@ class PdfPageView(QAbstractScrollArea):
                 if index is not None and (event.position() - self._press[0]).manhattanLength() > 3:
                     self.select_characters(self._anchor, (number, index))
         else:
-            link = self._link_at(number, point) if number is not None else None
+            link = self._link_entry_at(number, point) if number is not None else None
+            self._set_hover_link((number, link) if link else None, event.globalPosition().toPoint())
             self.viewport().setCursor(Qt.CursorShape.PointingHandCursor if link else
                                       Qt.CursorShape.IBeamCursor if number is not None else Qt.CursorShape.ArrowCursor)
+
+    def leaveEvent(self, event):
+        self._set_hover_link(None)
+        super().leaveEvent(event)
+
+    def _set_hover_link(self, hit, global_position=None):
+        old = self._hover_link[1] if self._hover_link else None
+        new = hit[1] if hit else None
+        if old is new:
+            return
+        self._hover_link = hit
+        window = self.window()
+        status = window.statusBar() if isinstance(window, QMainWindow) else None
+        if new is None:
+            QToolTip.hideText()
+            if status is not None and old is not None:
+                status.clearMessage()
+        else:
+            if global_position is not None:
+                QToolTip.showText(global_position, html.escape(new["label"]), self.viewport())
+            if status is not None and status.isVisible():
+                status.showMessage(f"リンク: {new['label']}")
+        self.viewport().update()
 
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton and self._pan_position is not None:
@@ -611,14 +682,68 @@ class PdfPageView(QAbstractScrollArea):
         else:
             super().mouseReleaseEvent(event)
 
-    def _link_at(self, number, point):
+    def _page_links(self, number):
+        """ページ内のリンク(必要になったページだけ読む)。rectsは回転前のページ座標。"""
+        if number in self._links_cache:
+            self._links_cache.move_to_end(number)
+            return self._links_cache[number]
+        page = self._document[number]
+        links = []
+        # 1) PDFに埋め込まれたリンク(get_linksの矩形は回転後のページ座標)
+        for link in page.get_links():
+            if link.get("kind") == pymupdf.LINK_GOTO and link.get("page", -1) >= 0:
+                label = f"{link['page'] + 1} ページへ移動"
+            else:
+                label = link.get("uri") or link.get("file")
+                if not label:
+                    continue
+                label = label.removeprefix("mailto:")
+            links.append({"rects": [pymupdf.Rect(link["from"]) * page.derotation_matrix],
+                          "link": link, "url": None, "label": label})
+        # 2) 本文に文字で書かれているだけのURL・メールアドレス
+        chars = self._characters(number)
+        text, char_index, previous = [], [], None
+        for index, (char, _bbox, line) in enumerate(chars):
+            if previous is not None and line != previous:
+                text.append("\n")
+                char_index.append(-1)
+            text.append(char)
+            char_index.extend([index] * len(char))
+            previous = line
+        text = "".join(text)
+        for match in _TEXT_LINK_RE.finditer(text):
+            raw = match.group(0).rstrip(".,;:!?)]}'\"")
+            indexes = [char_index[i] for i in range(match.start(), match.start() + len(raw))
+                       if char_index[i] >= 0]
+            if not raw or not indexes:
+                continue
+            lines = {}
+            for index in indexes:
+                _char, bbox, line = chars[index]
+                rect = pymupdf.Rect(bbox)
+                lines[line] = lines[line] | rect if line in lines else rect
+            rects = [rect for rect in lines.values() if not rect.is_empty]
+            # 埋め込みリンクと重なる場合はそちらを優先する
+            if not rects or any(rect.intersects(other) for rect in rects
+                                for entry in links if entry["link"] for other in entry["rects"]):
+                continue
+            if match.group("mail"):
+                url = "mailto:" + raw
+            else:
+                url = raw if raw.lower().startswith("http") else "http://" + raw
+            links.append({"rects": rects, "link": None, "url": url, "label": raw})
+        self._links_cache[number] = links
+        while len(self._links_cache) > 16:
+            self._links_cache.popitem(last=False)
+        return links
+
+    def _link_entry_at(self, number, point):
         if self._document is None:
             return None
-        # Link rectangles returned by get_links are in the rotated page coordinates.
-        rotated = point * self._document[number].rotation_matrix
-        for link in self._document[number].get_links():
-            if rotated in link["from"]:
-                return link
+        for entry in self._page_links(number):
+            for rect in entry["rects"]:
+                if pymupdf.Rect(rect.x0 - 1, rect.y0 - 1, rect.x1 + 1, rect.y1 + 1).contains(point):
+                    return entry
         return None
 
     def _raw_file_path(self, number, link):
@@ -652,9 +777,17 @@ class PdfPageView(QAbstractScrollArea):
         return None
 
     def activate_link_at(self, number, point):
-        link = self._link_at(number, point)
-        if link is None:
+        entry = self._link_entry_at(number, point)
+        if entry is None:
             return False
+        if entry["link"] is None:
+            url = QUrl(entry["url"])
+            if url.scheme().lower() not in _OPENABLE_SCHEMES:
+                return False
+            if not QDesktopServices.openUrl(url):
+                QMessageBox.warning(self, "リンクを開けません", url.toString())
+            return True
+        link = entry["link"]
         if link.get("kind") == pymupdf.LINK_GOTO and link.get("page", -1) >= 0:
             target = link.get("to", pymupdf.Point())
             if link["page"] >= self.page_count:
@@ -668,7 +801,7 @@ class PdfPageView(QAbstractScrollArea):
             return False
         url = QUrl(target)
         scheme = "file" if link.get("file") and not link.get("uri") else url.scheme().lower()
-        if scheme not in ("http", "https", "mailto", "file"):
+        if scheme not in _OPENABLE_SCHEMES:
             return False
         if scheme == "file":
             path = (self._raw_file_path(number, link) or url.toLocalFile() or target.removeprefix("file:")).replace("\u00a5", "\\")
@@ -764,6 +897,8 @@ class PdfPageView(QAbstractScrollArea):
             self._document = None
         self._cache.clear()
         self._chars_cache.clear()
+        self._links_cache.clear()
+        self._hover_link = None
         self.cache_bytes = 0
 
     def suspend_for_note_save(self):
