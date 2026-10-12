@@ -2,6 +2,12 @@
 
 This repository now consolidates the separate kojiPDF version repositories into the main `Code4Construct/kojiPDF` repository.
 
+## v2.6.1
+
+- Improved display scaling and responsive settings layout for laptop screens.
+- Improved Viewer bookmark and mail sidebar sizing and clipping, and consolidated file actions.
+- Updated application UI and build/installer version labels to v2.6.1.
+
 ## Unreleased
 
 - Added a Viewer toolbar button to launch kojiPDF and close the Viewer after successful launch.

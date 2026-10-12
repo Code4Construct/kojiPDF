@@ -52,6 +52,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSizePolicy,
     QSplitter,
+    QScrollBar,
     QStatusBar,
     QStyle,
     QStyledItemDelegate,
@@ -608,6 +609,7 @@ class SectionTreeModel(QStandardItemModel):
             item = QStandardItem(row.title)
             item.setEditable(False)
             item.setData(row, SECTION_ROLE)
+            item.setToolTip(f"{row.title}\n{row.start_page}-{row.end_page}")
             items_by_id[row.id] = item
             parent_item = items_by_id.get(row.parent_id) if row.parent_id is not None else None
             (parent_item or root).appendRow(item)
@@ -728,12 +730,14 @@ class SectionItemDelegate(QStyledItemDelegate):
         painter.setFont(f_title)
         painter.setPen(_bookmark_text_color(section.color_hex) if section.color_hex else QColor("#16181D"))
         title_rect = QRect(x, rect.top(), max(10, title_area_right - x), rect.height())
+        displayed_title = fm_title.elidedText(section.title, Qt.TextElideMode.ElideRight, title_rect.width())
         painter.drawText(title_rect, Qt.AlignmentFlag.AlignVCenter,
-                          fm_title.elidedText(section.title, Qt.TextElideMode.ElideRight, title_rect.width()))
+                          displayed_title)
 
         painter.setFont(f_page)
         painter.setPen(QColor("#9AA0A8"))
-        page_rect = QRect(right - page_w, rect.top(), page_w, rect.height())
+        page_x = min(right - page_w, x + fm_title.horizontalAdvance(displayed_title) + 8)
+        page_rect = QRect(page_x, rect.top(), page_w, rect.height())
         painter.drawText(page_rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight, page_text)
 
         painter.restore()
@@ -825,6 +829,70 @@ class RatioSplitter(QSplitter):
         if total > 0:
             left = round(total * self._left_ratio)
             self.setSizes([left, total - left])
+
+
+class ClippedSidebar(QWidget):
+    """Keep controls at their natural size while clipping the right-hand edge."""
+
+    def __init__(self, content, tree):
+        super().__init__()
+        self.content = content
+        self.viewport = QWidget(self)
+        content.setParent(self.viewport)
+        content.show()
+        self.tree = tree
+        for button in content.findChildren(QWidget):
+            if not isinstance(button, (QToolButton, QComboBox)):
+                continue
+            button.installEventFilter(self)
+        self.scrollbar = QScrollBar(Qt.Orientation.Vertical, self)
+        internal = tree.verticalScrollBar()
+        tree.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        tree.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        internal.rangeChanged.connect(self._range_changed)
+        internal.valueChanged.connect(self.scrollbar.setValue)
+        self.scrollbar.valueChanged.connect(internal.setValue)
+        self._range_changed(internal.minimum(), internal.maximum())
+
+    def minimumSizeHint(self):
+        return QSize(48, 0)
+
+    def sizeHint(self):
+        return self.content.sizeHint()
+
+    def _range_changed(self, minimum, maximum):
+        self.scrollbar.setRange(minimum, maximum)
+        self.scrollbar.setVisible(maximum > minimum)
+        self._layout_content()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._layout_content()
+
+    def eventFilter(self, watched, event):
+        if event.type() == QEvent.Type.FocusIn:
+            bounds = QRect(watched.mapTo(self.viewport, watched.rect().topLeft()), watched.size())
+            if not self.viewport.rect().contains(bounds):
+                self.tree.setFocus(Qt.FocusReason.OtherFocusReason)
+        return super().eventFilter(watched, event)
+
+    def _layout_content(self):
+        bar_width = self.scrollbar.sizeHint().width() if not self.scrollbar.isHidden() else 0
+        width = max(0, self.width() - bar_width)
+        self.viewport.setGeometry(0, 0, width, self.height())
+        self.content.setGeometry(0, 0, max(width, self.content.minimumSizeHint().width()), self.height())
+        self.scrollbar.setGeometry(width, 0, bar_width, self.height())
+        internal = self.tree.verticalScrollBar()
+        self.scrollbar.setPageStep(internal.pageStep())
+        self.scrollbar.setSingleStep(internal.singleStep())
+
+    def fit_width(self, splitter, needed):
+        total = splitter.width() - splitter.handleWidth()
+        limit = max(48, min(total // 2, total - 280))
+        position = self.tree.verticalScrollBar().value()
+        splitter._user_moved = True
+        splitter.setSizes([min(needed, limit), max(0, total - min(needed, limit))])
+        self.tree.verticalScrollBar().setValue(position)
 
 
 class PageNumberControl(QWidget):
@@ -1284,6 +1352,7 @@ class PdfTab(BasePdfTab):
         self.group_by_subject = False
         self.scope_toc_index: int | None = None
         self.include_descendants = False
+        self._sidebar_first_show = True
 
         self._build_ui()
 
@@ -1371,8 +1440,10 @@ class PdfTab(BasePdfTab):
         self.list_view.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.list_view.customContextMenuRequested.connect(self._show_context_menu)
         left_layout.addWidget(self.list_view)
-        self.sidebar = left
-        splitter.addWidget(left)
+        self.sidebar = ClippedSidebar(left, self.list_view)
+        self.mail_splitter = splitter
+        splitter.addWidget(self.sidebar)
+        splitter.setCollapsible(0, False)
 
         self._add_pdf_and_notes(splitter)
         splitter.setStretchFactor(0, 3)
@@ -1409,6 +1480,9 @@ class PdfTab(BasePdfTab):
         return True
 
     def refresh_list(self):
+        current = self.list_view.currentIndex()
+        selected = self.model.mail_at(current.row()) if current.isValid() else None
+        position = self.list_view.verticalScrollBar().value()
         rows = (
             db.list_scoped(self.db_path, self.current_query, self.sort_key, self.sort_descending,
                            self.scope_toc_index, self.include_descendants)
@@ -1416,11 +1490,61 @@ class PdfTab(BasePdfTab):
         )
         self.model.set_rows(rows, grouped=self.group_by_subject)
         self._update_count_label()
-        first = self.model.first_mail_index()
+        first = self.model.index_for_mail_id(selected.id) if selected else QModelIndex()
+        retained = first.isValid()
+        if not retained:
+            first = self.model.first_mail_index()
         if first.isValid():
-            self.list_view.setCurrentIndex(first)
+            self._syncing_selection = retained
+            try:
+                self.list_view.setCurrentIndex(first)
+            finally:
+                self._syncing_selection = False
         else:
             self.pdf_view.pageNavigator().jump(0, QPointF(0, 0))
+        self.list_view.verticalScrollBar().setValue(position)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if self._sidebar_first_show:
+            self._sidebar_first_show = False
+            QTimer.singleShot(0, self._fit_mail_sidebar)
+
+    def set_sidebar_visible(self, visible: bool):
+        was_hidden = self.sidebar.isHidden()
+        super().set_sidebar_visible(visible)
+        if visible and was_hidden:
+            QTimer.singleShot(0, self._fit_mail_sidebar)
+
+    def _fit_mail_sidebar(self):
+        if not self.isVisible() or self.sidebar.isHidden():
+            return
+        needed = self.sidebar.content.minimumSizeHint().width()
+        small = QFontMetrics(QFont("", 8))
+        normal = QFontMetrics(QFont("", 9))
+        for index in range(self.model.rowCount()):
+            header = self.model.header_at(index)
+            if header is not None:
+                needed = max(needed, normal.horizontalAdvance(
+                    f"{header.title}  ({len(header.mails)}件)") + 54)
+                continue
+            mail = self.model.mail_at(index)
+            if mail is None:
+                continue
+            font = QFont("", 10)
+            font.setBold(not mail.is_read or not mail.is_mail)
+            metrics = QFontMetrics(font)
+            attachments = mail.attachment_list()
+            chip_width = sum(min(small.horizontalAdvance(f"📎 {att.name}") + 16,
+                                 self.item_delegate.CHIP_MAX_WIDTH) + self.item_delegate.CHIP_GAP
+                             for att in attachments)
+            text_width = max(metrics.horizontalAdvance(mail.subject or "(件名なし)"),
+                metrics.horizontalAdvance(mail.sender_short or "(差出人不明)") +
+                normal.horizontalAdvance(_format_date(mail.title_datetime, mail.received_at)) + 12,
+                small.horizontalAdvance(f"宛先: {mail.to_addr}"), chip_width)
+            needed = max(needed, text_width + 94)
+        needed += self.sidebar.scrollbar.sizeHint().width() + 8
+        self.sidebar.fit_width(self.mail_splitter, needed)
 
     def _populate_scopes(self):
         self.scope_combo.blockSignals(True)
@@ -1451,6 +1575,7 @@ class PdfTab(BasePdfTab):
         self.range_combo.blockSignals(False)
         if self.db_path:
             self.refresh_list()
+        self._fit_mail_sidebar()
 
     def _on_scope_changed(self, *_args):
         self.scope_toc_index = self.scope_combo.currentData()
@@ -1458,6 +1583,7 @@ class PdfTab(BasePdfTab):
         self.range_combo.setEnabled(self.scope_toc_index is not None)
         if self.db_path:
             self.refresh_list()
+        self._fit_mail_sidebar()
 
     def _update_count_label(self):
         self.count_label.setText(f"{len(self.model.all_rows())} 件")
@@ -1476,21 +1602,25 @@ class PdfTab(BasePdfTab):
         self.sort_key = self.sort_combo.currentData()
         self._update_sort_dir_label()
         self.refresh_list()
+        self._fit_mail_sidebar()
 
     def _on_sort_dir_toggled(self, checked: bool):
         self.sort_descending = checked
         self._update_sort_dir_label()
         self.refresh_list()
+        self._fit_mail_sidebar()
 
     def _on_group_toggled(self, checked: bool):
         self.group_by_subject = checked
         self.list_view.setUniformItemSizes(not checked)
         self.refresh_list()
+        self._fit_mail_sidebar()
 
     def _toggle_group(self, key: str):
         """見出し行クリック時の折りたたみ/展開。選択中メールがまだ表示されていれば選択を維持する。"""
         current = self.list_view.currentIndex()
         current_mail = self.model.mail_at(current.row()) if current.isValid() else None
+        position = self.list_view.verticalScrollBar().value()
 
         self.model.toggle_collapsed(key)
 
@@ -1502,6 +1632,8 @@ class PdfTab(BasePdfTab):
                     self.list_view.setCurrentIndex(idx)
                 finally:
                     self._syncing_selection = False
+        self.list_view.verticalScrollBar().setValue(position)
+        self._fit_mail_sidebar()
 
     def _on_index_activated(self, index: QModelIndex, *_args):
         if not index.isValid() or self.model.is_empty():
@@ -1787,8 +1919,10 @@ class DocumentPdfTab(BasePdfTab):
         self.list_view.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.list_view.customContextMenuRequested.connect(self._show_context_menu)
         left_layout.addWidget(self.list_view)
-        self.sidebar = left
-        splitter.addWidget(left)
+        self.sidebar = ClippedSidebar(left, self.list_view)
+        self.bookmark_splitter = splitter
+        splitter.addWidget(self.sidebar)
+        splitter.setCollapsible(0, False)
 
         self._add_pdf_and_notes(splitter)
         splitter.setStretchFactor(0, 3)
@@ -1856,6 +1990,35 @@ class DocumentPdfTab(BasePdfTab):
         self._apply_display_depth()
         self._sync_selection_to_page(self.current_page())
         self._update_depth_controls()
+        self._fit_bookmark_sidebar()
+
+    def set_sidebar_visible(self, visible: bool):
+        was_hidden = self.sidebar.isHidden()
+        super().set_sidebar_visible(visible)
+        if visible and was_hidden:
+            QTimer.singleShot(0, self._fit_bookmark_sidebar)
+
+    def _fit_bookmark_sidebar(self):
+        if self.sidebar.isHidden():
+            return
+        tree = self.list_view
+        title_metrics = QFontMetrics(QFont("", 9))
+        page_metrics = QFontMetrics(QFont("", 8))
+        needed = self.sidebar.content.minimumSizeHint().width()
+        stack = [(self.model.index(row, 0), 1) for row in range(self.model.rowCount())]
+        while stack:
+            index, depth = stack.pop()
+            section = self.model.section_at(index)
+            if section is not None:
+                page_text = str(section.start_page) if section.start_page == section.end_page else f"{section.start_page}-{section.end_page}"
+                needed = max(needed, tree.indentation() * depth +
+                             title_metrics.horizontalAdvance(section.title) +
+                             page_metrics.horizontalAdvance(page_text) + 17 + 8 + 12)
+            if tree.isExpanded(index):
+                stack.extend((self.model.index(row, 0, index), depth + 1)
+                             for row in range(self.model.rowCount(index)))
+        needed += self.sidebar.scrollbar.sizeHint().width() + 8
+        self.sidebar.fit_width(self.bookmark_splitter, needed)
 
     def _apply_display_depth(self):
         self.list_view.collapseAll()
@@ -2224,27 +2387,32 @@ class MainWindow(QMainWindow):
         open_action = QAction(style.standardIcon(QStyle.StandardPixmap.SP_DialogOpenButton),
                                "PDFを開く", self)
         open_action.triggered.connect(self.open_pdf_dialog)
-        toolbar.addAction(open_action)
+        self.file_button = QToolButton()
+        self.file_button.setDefaultAction(open_action)
+        self.file_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+        self.file_button.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
+        self.file_button.setAccessibleName("PDFを開く・その他のファイル操作")
+        self.file_menu = QMenu(self.file_button)
+        self.file_button.setMenu(self.file_menu)
+        toolbar.addWidget(self.file_button)
 
-        self.recent_button = QToolButton()
-        self.recent_button.setText("最近使ったPDF")
-        self.recent_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-        self.recent_menu = QMenu(self.recent_button)
+        self.recent_menu = self.file_menu.addMenu("最近使ったPDF")
         self.recent_menu.aboutToShow.connect(self._populate_recent_menu)
-        self.recent_button.setMenu(self.recent_menu)
-        toolbar.addWidget(self.recent_button)
 
         self.reindex_action = QAction(style.standardIcon(QStyle.StandardPixmap.SP_BrowserReload),
-                                       "再インデックス", self)
+                                       "PDFを再読み込み", self)
+        self.reindex_action.setToolTip("一覧・検索データも再作成します")
         self.reindex_action.triggered.connect(self.reindex_current)
-        toolbar.addAction(self.reindex_action)
 
-        self.favorite_action = QAction("お気に入り", self)
+        self.favorite_action = QAction("お気に入りに登録", self)
         self.favorite_action.setCheckable(True)
         self.favorite_action.setEnabled(False)
         self.favorite_action.setToolTip("開いているPDFをお気に入りに登録/解除")
         self.favorite_action.triggered.connect(self._on_favorite_action_triggered)
-        toolbar.addAction(self.favorite_action)
+        self.file_menu.addAction(self.favorite_action)
+        self.file_menu.addSeparator()
+        self.file_menu.addAction(self.reindex_action)
+        self.file_menu.setToolTipsVisible(True)
 
         toolbar.addSeparator()
 
@@ -2722,7 +2890,7 @@ class MainWindow(QMainWindow):
         tab = self._current_tab()
         if isinstance(tab, BasePdfTab):
             if tab.notes.busy or tab.notes.pending or tab.notes.unsaved:
-                self.status.showMessage("コメントをPDFに保存してから再インデックスしてください")
+                self.status.showMessage("コメントをPDFに保存してから再読み込みしてください")
                 return
             self.load_pdf(tab.pdf_path, force_rebuild=True)
             tab.notes.close()

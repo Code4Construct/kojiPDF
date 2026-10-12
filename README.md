@@ -1,4 +1,4 @@
-# kojiPDF v2.6.0
+# kojiPDF v2.6.1
 
 kojiPDF is a Windows PDF utility for creating structured merged PDFs from folders that contain PDFs, Microsoft Office files, emails, images, text files, and ZIP archives.
 

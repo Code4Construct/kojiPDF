@@ -3,7 +3,7 @@ import os
 import time
 from html import escape
 
-from PySide6.QtCore import Qt, QObject, QEventLoop, QTimer, Signal, QSize, QRectF
+from PySide6.QtCore import Qt, QObject, QEvent, QEventLoop, QTimer, Signal, QSize, QRectF
 from PySide6.QtGui import QFont, QPixmap, QIcon, QPainter, QPainterPath, QColor, QPen
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDialog, QDoubleSpinBox, QFileDialog,
@@ -143,6 +143,13 @@ class FileSelectorApp(QDialog):
         self._progress_started = False
         self._user_closed = False
         self._applying_settings = False
+        self._display_screen = None
+        self._display_initialized = False
+        self._fit_screen_pending = False
+        self._layout_mode = None
+        self._display_timer = QTimer(self)
+        self._display_timer.setSingleShot(True)
+        self._display_timer.timeout.connect(self._update_display_layout)
         self.finished.connect(self._on_finished)
         self._build()
         self.apply_ui_settings(DEFAULT_UI_SETTINGS)
@@ -156,12 +163,13 @@ class FileSelectorApp(QDialog):
         window_icon_path = os.path.join(os.path.dirname(__file__), "assets", "icons", "smallicon_v2.ico")
         if os.path.isfile(window_icon_path):
             self.setWindowIcon(QIcon(window_icon_path))
-        screen = QApplication.primaryScreen()
+        screen = self.screen()
         available = screen.availableGeometry() if screen else None
         width = max(320, min(900, available.width() - 24)) if available else 900
         height = max(240, min(700, available.height() - 32)) if available else 700
         self.resize(width, height)
-        compact = bool(available and available.width() < 650)
+        # Build once; responsive reflow moves existing controls without losing values.
+        compact = False
         self.setStyleSheet("""
             QDialog { background: #e2e8f0; color: #102033; }
             QGroupBox { background: #fbfdff; border: 0; margin-top: 0; color: #073f66; }
@@ -180,6 +188,8 @@ class FileSelectorApp(QDialog):
         header_layout.setColumnStretch(1, 3)
         header_layout.setColumnStretch(2, 1)
         title = QLabel(self._text("title"))
+        self.title_label = title
+        title.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         title_font = _ui_font("Segoe UI Variable Display", 13 if compact else 22, bold=True)
         title.setFont(title_font)
@@ -376,6 +386,9 @@ class FileSelectorApp(QDialog):
                 indented.setContentsMargins(66 if not compact else 24, 0, 0, 0)
                 indented.addWidget(self._fields[key])
                 general.addLayout(indented, row, 0)
+                if row == 1:
+                    self.office_indent_rows = []
+                self.office_indent_rows.append(indented)
         resize_row = QHBoxLayout()
         resize_row.setSpacing(10)
         resize_row.addWidget(self._fields["resize_pdf"])
@@ -403,6 +416,7 @@ class FileSelectorApp(QDialog):
         detail_indent.addWidget(self.detail_hint)
         general.addLayout(detail_indent, 8 if compact else 3, 0 if compact else 1,
                           1 if compact else 2, 1)
+        self.general_side_rows = (save_row, detail_check_row, detail_indent)
 
         bookmark = self.section_forms["bookmark_options"]
         self._fields["add_bookmark_page_number_and_count"].setFont(_ui_font("Yu Gothic UI", 9))
@@ -436,11 +450,14 @@ class FileSelectorApp(QDialog):
         self.page_number_heading.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
         self.section_header_rows["page_number_options"].insertWidget(
             1, self._fields["add_pdf_page_numbers"])
+        self.page_cells = []
         for key in ("page_number_position", "page_number_format", "page_font", "page_color"):
             self._fields[key].setMaximumWidth(95)
         for index, key in enumerate(("page_number_position", "page_number_format", "page_start_page",
                                      "page_start_number", "page_opacity")):
-            page.addLayout(self._field_row(key, vertical=compact),
+            cell = self._field_row(key, vertical=compact)
+            self.page_cells.append(cell)
+            page.addLayout(cell,
                            index // 2 if compact else 0, index % 2 if compact else index)
         for index, key in enumerate(("page_font_size", "page_margin_x", "page_margin_y",
                                      "page_font", "page_color")):
@@ -459,6 +476,7 @@ class FileSelectorApp(QDialog):
                 field_layout = self._field_row(key, vertical=compact)
             page.addLayout(field_layout, place // 2 if compact else 1,
                            place % 2 if compact else index)
+            self.page_cells.append(field_layout)
             page.setColumnStretch(index % 2 if compact else index, 1)
         self._fields["page_font_size"].valueChanged.connect(self._update_page_font_hint)
         self._update_page_font_hint()
@@ -472,6 +490,7 @@ class FileSelectorApp(QDialog):
         view_row.addWidget(self._labels["bookmark_view_mode"])
         view_row.addWidget(self._fields["bookmark_view_mode"])
         view_row.addStretch()
+        self.view_mode_row = view_row
         if compact:
             scale.addLayout(view_row, 0, 0)
         else:
@@ -557,6 +576,149 @@ class FileSelectorApp(QDialog):
         widget = ToggleCheckBox()
         self._fields[key] = widget
         self._labels[key] = (widget, key)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if not self._display_initialized:
+            self._display_initialized = True
+            self.windowHandle().screenChanged.connect(self._screen_changed)
+            self._screen_changed(self.windowHandle().screen())
+            self._update_display_layout()
+            body = self.settings_scroll.widget()
+            margins = self.layout().contentsMargins()
+            available = self.screen().availableGeometry()
+            # Include wrapping and a margin for frame/DPI rounding on screen moves.
+            width = min(available.width() - 48,
+                        max(900, body.minimumSizeHint().width() +
+                            margins.left() + margins.right() + 24))
+            self.resize(max(320, width), self.height())
+            self._update_display_layout()
+            self.layout().activate()
+            required = (self.height() - self.settings_scroll.height() +
+                        body.heightForWidth(max(1, self.settings_scroll.viewport().width())))
+            required = max(required, self.height() - self.settings_scroll.height() +
+                           body.minimumSizeHint().height())
+            self.resize(self.width(), max(240, min(available.height() - 80,
+                                                 max(700, required + 32))))
+        self._display_timer.start(0)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if hasattr(self, "_display_timer"):
+            self._display_timer.start(0)
+
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.DevicePixelRatioChange:
+            self._display_timer.start(0)
+
+    def _screen_changed(self, screen):
+        if self._display_screen is not None:
+            for signal in (self._display_screen.availableGeometryChanged,
+                           self._display_screen.logicalDotsPerInchChanged):
+                try:
+                    signal.disconnect(self._screen_geometry_changed)
+                except (RuntimeError, TypeError):
+                    pass  # The previous monitor may have been disconnected.
+        self._display_screen = screen
+        if screen is not None:
+            screen.availableGeometryChanged.connect(self._screen_geometry_changed)
+            screen.logicalDotsPerInchChanged.connect(self._screen_geometry_changed)
+        self._fit_screen_pending = True
+        self._display_timer.start(0)
+
+    def _screen_geometry_changed(self, *_):
+        self._fit_screen_pending = True
+        self._display_timer.start(0)
+
+    def _schedule_display_update(self, *_):
+        self._display_timer.start(0)
+
+    def _update_display_layout(self):
+        screen = self.screen()
+        if screen is None:
+            return
+        dpi_name = "論理DPI" if self.language == "ja" else "logical DPI"
+        self.dpi_label.setText(
+            f"{round(screen.logicalDotsPerInch())} {dpi_name} / "
+            f"{round(self.devicePixelRatioF() * 100)}%")
+        self.dpi_label.setToolTip(screen.name())
+        if self._progress_started:
+            return
+        fit_screen = self._fit_screen_pending
+        self._fit_screen_pending = False
+        if fit_screen and not self.isMaximized():
+            available = screen.availableGeometry()
+            fitted_width = max(320, min(self.width(), available.width() - 48))
+            fitted_height = max(240, min(self.height(), available.height() - 80))
+            if (fitted_width, fitted_height) != (self.width(), self.height()):
+                self.resize(fitted_width, fitted_height)
+        margins = self.layout().contentsMargins()
+        width = max(1, self.width() - margins.left() - margins.right() - 16)
+        stacked = width < 740
+        cell_widths = [cell.minimumSize().width() for cell in self.page_cells]
+        columns = 1
+        for candidate in (5, 3, 2):
+            needed = sum(max(cell_widths[column::candidate])
+                         for column in range(candidate)) + 3 * (candidate - 1) + 24
+            if needed <= width:
+                columns = candidate
+                break
+        mode = (stacked, columns, self.language)
+        if mode == self._layout_mode:
+            return
+        self._layout_mode = mode
+        body = self.settings_body_layout
+        for section in self.sections.values():
+            body.removeWidget(section)
+        for row in range(6):
+            body.setRowStretch(row, 0)
+        positions = (("general_options", 0, 0, 1), ("bookmark_options", 1, 0, 1),
+                     ("page_number_options", 2, 0, 1), ("scale_options", 3, 0, 1),
+                     ("asp_options", 4, 0, 1)) if stacked else (
+                     ("general_options", 0, 0, 1), ("bookmark_options", 0, 1, 1),
+                     ("page_number_options", 1, 0, 2), ("scale_options", 2, 0, 1),
+                     ("asp_options", 2, 1, 1))
+        body.setColumnStretch(1, 0 if stacked else 1)
+        for name, row, column, span in positions:
+            body.addWidget(self.sections[name], row, column, 1, span)
+            self.sections[name].setMinimumHeight(0 if stacked else
+                (160 if name in ("general_options", "bookmark_options") else
+                 60 if name in ("scale_options", "asp_options") else
+                 118 if self.language == "en" else 114))
+        body.setRowStretch(5 if stacked else 2, 1)
+        general = self.section_forms["general_options"]
+        general.setColumnStretch(0, 1 if stacked else 3)
+        general.setColumnStretch(1, 0 if stacked else 2)
+        self.title_label.setFont(_ui_font("Segoe UI Variable Display", 13 if stacked else 22, bold=True))
+        for row in self.general_side_rows:
+            general.removeItem(row)
+        for item, wide_row, compact_row in zip(self.general_side_rows, (0, 2, 3), (6, 7, 8)):
+            general.addLayout(item, compact_row if stacked else wide_row,
+                              0 if stacked else 1, 1 if stacked else
+                              (2 if wide_row == 3 else 1), 1)
+        for row in self.office_indent_rows:
+            row.setContentsMargins(24 if stacked else 66, 0, 0, 0)
+        for row, indent in zip(self.general_side_rows, (58, 29, 56)):
+            row.setContentsMargins(0 if stacked else indent, 0, 0, 0)
+        self.detail_hint.setMaximumWidth(16777215 if stacked else 165)
+        page = self.section_forms["page_number_options"]
+        for cell in self.page_cells:
+            page.removeItem(cell)
+        for column in range(5):
+            page.setColumnStretch(column, 1 if column < columns else 0)
+        for index, cell in enumerate(self.page_cells):
+            page.addLayout(cell, index // columns, index % columns)
+        scale = self.section_forms["scale_options"]
+        heading = self.section_header_rows["scale_options"]
+        heading.removeItem(self.view_mode_row)
+        scale.removeItem(self.view_mode_row)
+        self.view_mode_row.setContentsMargins(0 if stacked else 25, 0, 0, 0)
+        if stacked:
+            scale.addLayout(self.view_mode_row, 1, 0, 1, 2)
+        else:
+            heading.insertLayout(1, self.view_mode_row)
+        self.layout().activate()
 
     def _combo(self, key, labels):
         widget = QComboBox()
@@ -651,7 +813,7 @@ class FileSelectorApp(QDialog):
         for code, button in self.flag_buttons.items():
             border = "#8ed5f0" if code == self.language else "transparent"
             button.setStyleSheet(f"border: 2px solid {border}; border-radius: 20px; background: white")
-        self.dpi_label.setText(f"{round(QApplication.primaryScreen().logicalDotsPerInch())} DPI / {round(QApplication.primaryScreen().devicePixelRatio() * 100)}%")
+        self._schedule_display_update()
         for key, label in self.section_titles.items():
             label.setText(self._text(key))
         for key in ("select_folder", "output"):
