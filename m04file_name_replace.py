@@ -8,7 +8,10 @@ def prepare_treedata_for_merge(df):
     """
     Sort tree rows and add the cumulative starting page as ``Page All``.
     """
-    sorted_rows = sorted((row.copy() for row in df), key=lambda row: row.get("sortpath", ""))
+    sorted_rows = sorted(
+        (row.copy() for row in df),
+        key=lambda row: row.get("sortkey", ((0, row.get("sortpath", "")),)),
+    )
     page_all = 0
     for row in sorted_rows:
         row["Page All"] = page_all

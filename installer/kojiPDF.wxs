@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
   <?ifndef AppVersion ?>
-  <?define AppVersion = "2.6.1" ?>
+  <?define AppVersion = "2.6.2" ?>
   <?endif ?>
   <Product
     Id="*"
@@ -40,6 +40,7 @@
       <ComponentRef Id="DocumentationFiles" />
       <ComponentRef Id="ApplicationShortcuts" />
       <ComponentRef Id="DesktopShortcut" />
+      <ComponentRef Id="PdfFileAssociation" />
     </Feature>
 
     <Directory Id="TARGETDIR" Name="SourceDir">
@@ -48,6 +49,30 @@
           <Component Id="DocumentationFiles" Guid="{8B7ED622-6758-4068-8CC8-9B1C65742114}">
             <File Id="ReadmeFile" Source="$(var.ProjectDir)\README.md" KeyPath="yes" />
             <File Id="LicenseFile" Source="$(var.ProjectDir)\LICENSE" />
+          </Component>
+          <Component Id="PdfFileAssociation" Guid="{F26E41B2-4A7B-4E35-9F54-91D96A72CC18}" Win64="yes">
+            <RegistryValue Root="HKLM" Key="Software\Classes\Code4Construct.kojiPDF.PDF"
+                           Type="string" Value="PDF document (kojiPDFviewer)" />
+            <RegistryValue Root="HKLM" Key="Software\Classes\Code4Construct.kojiPDF.PDF\DefaultIcon"
+                           Type="string" Value="&quot;[INSTALLFOLDER]koji_viewer\assets\icons\kojiPDFviewer.ico&quot;,0" />
+            <RegistryValue Root="HKLM" Key="Software\Classes\Code4Construct.kojiPDF.PDF\shell\open\command"
+                           Type="string" Value="&quot;[INSTALLFOLDER]kojiPDFv2.exe&quot; &quot;%1&quot;" />
+            <RegistryValue Root="HKLM" Key="Software\Classes\.pdf\OpenWithProgids"
+                           Name="Code4Construct.kojiPDF.PDF" Type="string" Value="" />
+            <RegistryValue Root="HKLM" Key="Software\Classes\Applications\kojiPDFv2.exe"
+                           Name="FriendlyAppName" Type="string" Value="kojiPDFviewer" />
+            <RegistryValue Root="HKLM" Key="Software\Classes\Applications\kojiPDFv2.exe\SupportedTypes"
+                           Name=".pdf" Type="string" Value="" />
+            <RegistryValue Root="HKLM" Key="Software\Classes\Applications\kojiPDFv2.exe\shell\open\command"
+                           Type="string" Value="&quot;[INSTALLFOLDER]kojiPDFv2.exe&quot; &quot;%1&quot;" />
+            <RegistryValue Root="HKLM" Key="Software\Code4Construct\kojiPDF\Capabilities"
+                           Name="ApplicationName" Type="string" Value="kojiPDFviewer" KeyPath="yes" />
+            <RegistryValue Root="HKLM" Key="Software\Code4Construct\kojiPDF\Capabilities"
+                           Name="ApplicationDescription" Type="string" Value="View and review PDF documents with kojiPDFviewer" />
+            <RegistryValue Root="HKLM" Key="Software\Code4Construct\kojiPDF\Capabilities\FileAssociations"
+                           Name=".pdf" Type="string" Value="Code4Construct.kojiPDF.PDF" />
+            <RegistryValue Root="HKLM" Key="Software\RegisteredApplications"
+                           Name="kojiPDFviewer" Type="string" Value="Software\Code4Construct\kojiPDF\Capabilities" />
           </Component>
         </Directory>
       </Directory>

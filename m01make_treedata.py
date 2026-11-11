@@ -1,7 +1,31 @@
 import os
+import re
+from pathlib import Path
 
 from fitz import Document
 import m53path_display_map as display_names
+
+
+def mapped_sort_key(relative_path, display_map):
+    """Sort ordinary siblings by original name; keep expanded mail order intact."""
+    parts = Path(relative_path).parts
+    parent_relative = ""
+    inside_mail = False
+    key = []
+    for index, part in enumerate(parts):
+        relative = display_names.normalize_relative_path(Path(parent_relative) / part)
+        is_mail = (
+            index < len(parts) - 1
+            and relative in display_map
+            and re.fullmatch(r"m\d{5,}", part) is not None
+        )
+        if inside_mail or is_mail:
+            key.append((1 if is_mail and not inside_mail else 0, part))
+            inside_mail = True
+        else:
+            key.append((0, display_map.get(relative, part)))
+        parent_relative = relative
+    return tuple(key)
 
 
 def collect_pdf_paths(folder_path):
@@ -73,6 +97,8 @@ def build_tree_data(input_folder, excluded_paths=None):
             "Full Path": path,
             "sortpath": path,
         }
+        if display_map:
+            row["sortkey"] = mapped_sort_key(os.path.relpath(path, input_folder), display_map)
         for index, part in enumerate(parts, start=1):
             row[f"Level {index}"] = part
         rows.append(row)

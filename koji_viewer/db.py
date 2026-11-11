@@ -1,6 +1,6 @@
 """メールPDFの解析結果をSQLite(FTS5)にキャッシュし、全文検索を提供する。
 
-PDFと同じフォルダに "<pdf名>.index.sqlite3" を作成する。
+PDFごとの "<拡張子なしpdf名>_review" フォルダに索引を作成する。
 PDFのサイズ・更新日時が変わっていれば再構築する。
 """
 from __future__ import annotations
@@ -8,12 +8,14 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+from pathlib import Path
 from contextlib import closing
 from dataclasses import dataclass
 
 import pymupdf
 
 from .parser import extract_document_sections, extract_mails
+from . import review_paths
 
 MAIL_INDEX_VERSION = "4"
 DOCUMENT_INDEX_VERSION = "3"
@@ -107,7 +109,22 @@ END;
 
 def index_path_for(pdf_path: str, mode: str = "mail") -> str:
     suffix = ".document.index.sqlite3" if mode == "document" else ".index.sqlite3"
-    return pdf_path + suffix
+    return str(review_paths.artifact(pdf_path, Path(pdf_path).name + suffix))
+
+
+def existing_index_path(pdf_path, mode="mail"):
+    target = index_path_for(pdf_path, mode)
+    suffix = ".document.index.sqlite3" if mode == "document" else ".index.sqlite3"
+    old = str(pdf_path) + suffix
+    if not os.path.exists(target) and os.path.isfile(old):
+        return old
+    return target
+
+
+def _prepare_index_path(pdf_path, mode):
+    target = existing_index_path(pdf_path, mode)
+    review_paths.ensure_parent(target)
+    return target
 
 
 def _pdf_signature(pdf_path: str) -> str:
@@ -119,8 +136,8 @@ def preserve_note_save_indexes(source, destination, old_pdf):
     """Annotation-only saves do not change text, scope, read flags or FTS rows."""
     old_signature = f"{old_pdf['size']}:{old_pdf['mtime_ns'] // 1_000_000_000}"
     for mode in ("mail", "document"):
-        original = index_path_for(source, mode)
-        target = index_path_for(destination, mode)
+        original = _prepare_index_path(source, mode)
+        target = _prepare_index_path(destination, mode)
         if not os.path.isfile(original):
             continue
         with closing(sqlite3.connect(original)) as connection:
@@ -237,7 +254,7 @@ def open_or_build(pdf_path: str, mode: str = "mail", force_rebuild: bool = False
     mode は "mail"(メール束PDF) か "document"(一般資料PDF、しおり階層閲覧)。
     既存インデックスのmode・PDF署名がずれていれば自動的に再構築する。
     """
-    db_path = index_path_for(pdf_path, mode)
+    db_path = _prepare_index_path(pdf_path, mode)
     sig = _pdf_signature(pdf_path)
     builder = _build if mode == "mail" else _build_document
 

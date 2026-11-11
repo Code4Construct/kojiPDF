@@ -774,32 +774,6 @@ def _render_pages_to_printer(pdf_path: str, printer: QPrinter,
         painter.end()
 
 
-def _render_pdf_thumbnail(path: str, width: int) -> "QPixmap | None":
-    """PDFの1ページ目を指定幅の縮小画像にして返す(開始画面のサムネイル用)。失敗時はNone。"""
-    doc = None
-    try:
-        doc = pymupdf.open(path)
-        if doc.page_count < 1 or doc.needs_pass:
-            return None
-        page = doc[0]
-        scale = width / page.rect.width
-        pix = page.get_pixmap(matrix=pymupdf.Matrix(scale, scale), colorspace=pymupdf.csRGB, alpha=False)
-        image = QImage(pix.samples, pix.width, pix.height, pix.stride, QImage.Format.Format_RGB888).copy()
-        pixmap = QPixmap.fromImage(image)
-        # 白いページが背景に溶け込んで境界が分からなくなるため、枠線を描画しておく
-        painter = QPainter(pixmap)
-        painter.setPen(QPen(QColor("#C7CBD1"), 1))
-        painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.drawRect(0, 0, pixmap.width() - 1, pixmap.height() - 1)
-        painter.end()
-        return pixmap
-    except Exception:  # noqa: BLE001
-        return None
-    finally:
-        if doc is not None:
-            doc.close()
-
-
 class RatioSplitter(QSplitter):
     """一覧側の幅を、常に全体幅に対する比率で保つQSplitter(ユーザーが手動で
     ドラッグするまでは)。
@@ -2145,56 +2119,47 @@ class DocumentPdfTab(BasePdfTab):
 
 # ------------------------------------------------------------ 開始画面(PDF未オープン時)
 class RecentPdfListWidget(QListWidget):
-    """お気に入り/最近使ったPDFを、サムネイル付きで横に並べて表示する一覧。"""
+    """お気に入り/最近使ったPDFを、ファイル名だけで縦に表示する一覧。"""
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setViewMode(QListWidget.ViewMode.IconMode)
-        self.setFlow(QListWidget.Flow.LeftToRight)
+        self.setViewMode(QListWidget.ViewMode.ListMode)
+        self.setFlow(QListWidget.Flow.TopToBottom)
         self.setWrapping(False)
         self.setMovement(QListWidget.Movement.Static)
-        self.setIconSize(QSize(110, 142))
-        self.setGridSize(QSize(140, 176))
-        self.setSpacing(6)
-        self.setWordWrap(True)
+        self.setSpacing(2)
+        self.setWordWrap(False)
+        self.setTextElideMode(Qt.TextElideMode.ElideMiddle)
         self.setFrameShape(QFrame.Shape.NoFrame)
         self.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
         self.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.setUniformItemSizes(True)
-        self.setFixedHeight(190)
-        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
 
-    MAX_CONTENT_WIDTH = 1000  # これを超える項目数のときは幅を打ち切り、内部の横スクロールに任せる
+    MAX_CONTENT_WIDTH = 1000
+    MAX_VISIBLE_ROWS = 6
 
     def resize_to_content(self):
-        """項目数に合わせて実際に必要な幅ちょうどに固定する
-        (親レイアウト側のAlignHCenterと組み合わせて中央寄せするため)。
-        親レイアウトにAlignHCenterを渡すとQtはこのウィジェットを引き伸ばさず自然な
-        サイズで配置するので、幅を明示的に固定しておかないと常にsizeHint()の
-        デフォルト値(内容に関わらず固定の256px)で描画されてしまう。
-        """
+        """ファイル名と行数に合わせ、一覧の幅と高さを上限内で調整する。"""
         count = self.count()
         if count == 0:
             return
-        self.setMinimumWidth(0)
-        self.setMaximumWidth(16777215)  # 一旦解除してから正しい位置でレイアウトさせる
         self.doItemsLayout()
-        last_rect = self.visualItemRect(self.item(count - 1))
-        content_width = last_rect.right() + 16
-        self.setFixedWidth(min(content_width, self.MAX_CONTENT_WIDTH))
+        row_height = self.sizeHintForRow(0) + 2 * self.spacing()
+        self.setFixedHeight(min(count, self.MAX_VISIBLE_ROWS) * row_height + 4)
+        content_width = max(self.fontMetrics().horizontalAdvance(self.item(i).text()) for i in range(count))
+        self.setFixedWidth(min(max(360, content_width + self.verticalScrollBar().sizeHint().width() + 24),
+                               self.MAX_CONTENT_WIDTH))
 
 
 class WelcomeWidget(QWidget):
     """PDFを1つも開いていないときに表示する開始画面。操作案内と、お気に入り/最近使った
-    PDFのサムネイル一覧を表示する(タブが無いと画面が真っ白になってしまうのを防ぐ)。"""
-
-    THUMB_WIDTH = 110
+    PDFのファイル名一覧を表示する(タブが無いと画面が真っ白になってしまうのを防ぐ)。"""
 
     def __init__(self, window: "MainWindow", parent=None):
         super().__init__(parent)
         self._window = window
-        self._thumb_cache: dict[str, QPixmap] = {}  # f"{path}:{mtime}" -> サムネイル画像
         self._build_ui()
 
     @property
@@ -2263,25 +2228,8 @@ class WelcomeWidget(QWidget):
             item = QListWidgetItem(os.path.basename(path))
             item.setData(Qt.ItemDataRole.UserRole, path)
             item.setToolTip(path)
-            pixmap = self._thumbnail_for(path)
-            if pixmap is not None:
-                item.setIcon(QIcon(pixmap))
             list_widget.addItem(item)
         list_widget.resize_to_content()
-
-    def _thumbnail_for(self, path: str) -> "QPixmap | None":
-        try:
-            mtime = os.path.getmtime(path)
-        except OSError:
-            return None
-        cache_key = f"{path}:{mtime}"
-        cached = self._thumb_cache.get(cache_key)
-        if cached is not None:
-            return cached
-        pixmap = _render_pdf_thumbnail(path, self.THUMB_WIDTH)
-        if pixmap is not None:
-            self._thumb_cache[cache_key] = pixmap
-        return pixmap
 
     # ------------------------------------------------------------- 操作
     def _on_item_activated(self, item: "QListWidgetItem"):
@@ -2935,7 +2883,7 @@ class MainWindow(QMainWindow):
         index = self.tabs.indexOf(tab)
         if index >= 0:
             self.tabs.setTabToolTip(index, new)
-        tab.db_path = db.index_path_for(new, tab.MODE) if os.path.exists(db.index_path_for(new, tab.MODE)) else None
+        tab.db_path = db.existing_index_path(new, tab.MODE) if os.path.exists(db.existing_index_path(new, tab.MODE)) else None
         self._add_recent_file(new)
         self._update_favorite_action()
 

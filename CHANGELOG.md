@@ -2,6 +2,15 @@
 
 This repository now consolidates the separate kojiPDF version repositories into the main `Code4Construct/kojiPDF` repository.
 
+## v2.6.2
+
+- Sort ordinary folders and files together by their original names while keeping expanded mail after ordinary items.
+- Show recent and favorite PDFs as filename lists without opening PDFs to generate startup thumbnails.
+- Clarify and group review actions; add review restart with optional PDF-comment deletion and a pre-reset backup.
+- Store newly created review JSON, SQLite indexes and lock files in a per-PDF `_review` folder; retain existing adjacent files in place.
+- Open PDF arguments directly in the Viewer and register kojiPDFviewer as an optional PDF application in the MSI.
+- Update GUI, executable and installer version metadata to v2.6.2. Compiled MSI and installed-app acceptance are pending.
+
 ## v2.6.1
 
 - Improved display scaling and responsive settings layout for laptop screens.

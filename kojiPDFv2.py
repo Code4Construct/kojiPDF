@@ -742,6 +742,10 @@ def wait_for_viewer_close(progress_ui):
 
 
 def main():
+    if len(sys.argv) > 1 and os.path.splitext(sys.argv[1])[1].lower() == ".pdf":
+        from koji_viewer.main import main as viewer_main
+        return viewer_main()
+
     launch_config = None
     if len(sys.argv) > 1:
         config_path = sys.argv[1]

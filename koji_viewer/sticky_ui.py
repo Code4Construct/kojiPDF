@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (QComboBox, QDialog, QDialogButtonBox, QFileDialog
 from .pdf_jobs import PdfJob
 from . import sticky_notes as store
 from . import review as reviews
+from . import review_paths
 
 
 def color_icon(color):
@@ -124,6 +125,37 @@ class NoteEditor(QDialog):
             self.accept()
 
 
+class RestartReviewDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("レビューを最初からやり直す")
+        self.resize(480, 300)
+        layout = QVBoxLayout(self)
+        description = QLabel("現在のレビューのコメント・確認状態・取りまとめメモ・取り込み履歴を初期化します。記入者名は残します。")
+        description.setWordWrap(True)
+        layout.addWidget(description)
+        layout.addWidget(QLabel("PDFに保存済みのコメントも削除しますか？"))
+        self.delete_pdf_comments = QCheckBox("PDFに保存済みの付箋コメントも削除する")
+        layout.addWidget(self.delete_pdf_comments)
+        scope = QLabel("チェックしない場合：PDFに保存済みのコメントは残ります。\n"
+                       "チェックする場合：他ソフトで追加したものを含め、PDFの付箋コメントを削除対象にします。削除は次回のPDF保存時に反映します。\n"
+                       "ハイライトなど、付箋以外の注釈は削除しません。")
+        scope.setWordWrap(True)
+        layout.addWidget(scope)
+        self.backup = QCheckBox("初期化前のレビュー全体をバックアップする")
+        self.backup.setChecked(True)
+        layout.addWidget(self.backup)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("初期化する")
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setAutoDefault(False)
+        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("キャンセル")
+        buttons.button(QDialogButtonBox.StandardButton.Cancel).setDefault(True)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+        buttons.button(QDialogButtonBox.StandardButton.Cancel).setFocus()
+
+
 class NotesPanel(QWidget):
     def __init__(self, controller, parent=None):
         super().__init__(parent)
@@ -131,6 +163,14 @@ class NotesPanel(QWidget):
         self.setMinimumWidth(290)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(4)
+
+        def section_heading(text):
+            layout.addSpacing(6)
+            label = QLabel(text)
+            label.setStyleSheet("font-weight: bold; color: #4A4F58;")
+            layout.addWidget(label)
+
         heading = QHBoxLayout()
         title = QLabel("書類レビュー")
         title.setStyleSheet("font-weight: bold; font-size: 14px;")
@@ -142,6 +182,7 @@ class NotesPanel(QWidget):
         close.clicked.connect(controller.hide_panel)
         heading.addWidget(close)
         layout.addLayout(heading)
+        section_heading("コメント")
         author_row = QHBoxLayout()
         author_row.addWidget(QLabel("記入者"))
         self.author = QLineEdit()
@@ -149,19 +190,22 @@ class NotesPanel(QWidget):
         self.author.editingFinished.connect(controller.set_author)
         author_row.addWidget(self.author)
         layout.addLayout(author_row)
-        self.add_button = QPushButton("＋ コメント")
+        self.add_button = QPushButton("コメント記入")
+        self.add_button.setToolTip("PDF上の位置を選んでコメントを記入します")
         self.add_button.clicked.connect(controller.begin_placement)
         layout.addWidget(self.add_button)
-        exchange = QHBoxLayout()
-        self.import_button = QPushButton("取り込む")
-        self.import_button.setToolTip("レビューを取り込む")
+        section_heading("ファイルの受け渡し")
+        exchange = QVBoxLayout()
+        self.import_button = QPushButton("他の記入者のコメントを取り込む")
+        self.import_button.setToolTip("他の記入者の提出用JSONからコメントを追加・更新します。現在の作業全体を置き換える操作ではありません。")
         self.import_button.clicked.connect(controller.import_reviews)
-        self.export_button = QPushButton("書き出す")
-        self.export_button.setToolTip("レビューを書き出す")
+        self.export_button = QPushButton("現在の記入者のコメントを書き出す")
+        self.export_button.setToolTip("表示の絞り込みに関係なく、現在の記入者のコメントと更新・削除情報を提出用JSONに書き出します。他の記入者のコメントは含みません。")
         self.export_button.clicked.connect(controller.export_review)
         exchange.addWidget(self.import_button)
         exchange.addWidget(self.export_button)
         layout.addLayout(exchange)
+        section_heading("絞り込み")
         self.author_filter = QComboBox()
         self.author_filter.addItem("記入者：全員", "")
         self.status_filter = QComboBox()
@@ -177,6 +221,7 @@ class NotesPanel(QWidget):
         self.excluded_filter.addItem("除外したコメント", "excluded")
         self.excluded_filter.addItem("除外を含むすべて", "all")
         layout.addWidget(self.excluded_filter)
+        section_heading("検索")
         self.search = QLineEdit()
         self.search.setPlaceholderText("コメント・取りまとめメモを検索")
         layout.addWidget(self.search)
@@ -191,6 +236,7 @@ class NotesPanel(QWidget):
         self.list.itemClicked.connect(lambda item: controller.navigate(item.data(Qt.ItemDataRole.UserRole)))
         self.list.itemDoubleClicked.connect(lambda item: controller.edit_note(item.data(Qt.ItemDataRole.UserRole)))
         layout.addWidget(self.list, 1)
+        section_heading("保存・復元")
         self.status = QLabel()
         self.status.setTextFormat(Qt.TextFormat.PlainText)
         self.status.setWordWrap(True)
@@ -210,13 +256,18 @@ class NotesPanel(QWidget):
         menu = QMenu(self.more)
         self.save_as_action = menu.addAction("名前を付けてPDFに保存")
         self.save_as_action.triggered.connect(controller.save_as)
-        self.merged_action = menu.addAction("レビュー集約を保存")
+        self.merged_action = menu.addAction("レビュー全体を保存")
+        self.merged_action.setToolTip("全員分のコメント・確認状態・取りまとめメモ・履歴を含む作業全体をJSONに保存します。")
         self.merged_action.triggered.connect(controller.export_merged)
-        self.open_merged_action = menu.addAction("レビュー集約を開く")
+        self.open_merged_action = menu.addAction("レビュー全体を復元")
+        self.open_merged_action.setToolTip("保存したJSONから履歴を含む作業全体を復元し、現在の作業内容を置き換えます。")
         self.open_merged_action.triggered.connect(controller.open_merged)
         self.history_action = menu.addAction("レビュー履歴")
         self.history_action.triggered.connect(controller.show_history)
         menu.addSeparator()
+        self.restart_action = menu.addAction("レビューを最初からやり直す…")
+        self.restart_action.setToolTip("記入者名を残してレビューを初期化します。PDF保存済みコメントの削除とバックアップを選べます。")
+        self.restart_action.triggered.connect(controller.restart_review)
         self.discard_action = menu.addAction("PDF未反映の変更をすべて破棄")
         self.discard_action.triggered.connect(controller.discard_all)
         self.more.setMenu(menu)
@@ -353,12 +404,12 @@ class NotesController(QObject):
                     raise ValueError("付箋メモJSONが別のアプリで変更されました")
                 saved = result["saved_result"]
                 if store.canonical(saved["path"]) != store.canonical(self.path):
-                    self.destination_lock = store.EditLock(store.sidecar_path(saved["path"]))
+                    target_sidecar = store.existing_sidecar_path(saved["path"])
+                    self.destination_lock = store.EditLock(target_sidecar)
                     self.destination_lock.acquire()
-                    if store.sidecar_token(store.sidecar_path(saved["path"])) is not None:
+                    if store.sidecar_token(target_sidecar) is not None:
                         if self.review is None:
                             raise ValueError("保存先に未反映の付箋メモがあるため、復旧先を開けません")
-                        target_sidecar = store.sidecar_path(saved["path"])
                         target_token = store.sidecar_token(target_sidecar)
                         self.destination_token = target_token
                         value = json.loads(Path(target_sidecar).read_text(encoding="utf-8"))
@@ -403,6 +454,7 @@ class NotesController(QObject):
         self.panel.export_button.setEnabled(editable)
         self.panel.merged_action.setEnabled(editable)
         self.panel.open_merged_action.setEnabled(editable)
+        self.panel.restart_action.setEnabled(editable and self.transaction is None)
         self.panel.history_action.setEnabled(self.review is not None and not self.busy)
         if self.review is not None and not self.panel.author.hasFocus():
             self.panel.author.setText(self.review["author"]["name"])
@@ -479,15 +531,21 @@ class NotesController(QObject):
         self.tab.pdf_view.set_note_placement(False)
         self.changed.emit()
 
-    def _activate_review(self):
+    def _review_snapshot(self):
         if self.review is not None:
-            return
-        self.review = reviews.create(self.pdf, self.baseline)
-        bindings = {v: k for k, v in self.review["bindings"].items()}
+            return copy.deepcopy(self.review)
+        state = reviews.create(self.pdf, self.baseline)
+        bindings = {v: k for k, v in state["bindings"].items()}
         for identity, change in self.changes.items():
             stable = bindings.get(identity, identity if identity.startswith(("koji-note:", "koji-review:")) else "koji-review:" + str(uuid.uuid4()))
             note = change["note"]
-            reviews.change(self.review, stable, dict(note, id=stable, nm=stable) if note else None)
+            reviews.change(state, stable, dict(note, id=stable, nm=stable) if note else None)
+        return state
+
+    def _activate_review(self):
+        if self.review is not None:
+            return
+        self.review = self._review_snapshot()
         self.unsaved = True
         self._autosave_timer.start(0)
 
@@ -537,7 +595,7 @@ class NotesController(QObject):
         self._review_changed()
 
     def import_reviews(self):
-        paths, _ = QFileDialog.getOpenFileNames(self.tab, "レビューを取り込む", str(Path(self.path).parent), "レビューJSON (*.json)")
+        paths, _ = QFileDialog.getOpenFileNames(self.tab, "他の記入者のコメントを取り込む", str(review_paths.directory(self.path)), "レビューJSON (*.json)")
         if not paths or not self._ensure_edit():
             return
         self._activate_review()
@@ -560,7 +618,9 @@ class NotesController(QObject):
         path, _ = QFileDialog.getSaveFileName(self.tab, caption, default, "レビューJSON (*.json)")
         if path and not path.lower().endswith(".json"):
             path += ".json"
-        if path and store.canonical(path) in (store.canonical(self.sidecar), store.canonical(store.legacy_sidecar_path(self.path))):
+        if path and store.canonical(path) in (
+            store.canonical(p) for p in (self.sidecar, *store.adjacent_sidecars(self.path))
+        ):
             raise ValueError("提出・集約JSONは作業用JSONと別名にしてください")
         return path
 
@@ -571,7 +631,7 @@ class NotesController(QObject):
         try:
             self.set_author()
             value = reviews.submission(self.review)
-            path = self._json_destination("レビューを書き出す", reviews.output_path(self.review, self.path, "submission", ".json", value["revision"]))
+            path = self._json_destination("現在の記入者のコメントを書き出す", reviews.output_path(self.review, self.path, "submission", ".json", value["revision"]))
             if not path:
                 return
             # Reserve the revision durably before issuing an external file.
@@ -590,16 +650,16 @@ class NotesController(QObject):
             return
         self._activate_review()
         try:
-            path = self._json_destination("レビュー集約を保存", reviews.output_path(self.review, self.path, "merged", ".json"))
+            path = self._json_destination("レビュー全体を保存", reviews.output_path(self.review, self.path, "merged", ".json"))
             if path and self.autosave():
                 store.atomic_json(path, self.review)
-                self.stage_text = "レビュー集約を保存しました"
+                self.stage_text = "レビュー全体を保存しました"
         except Exception as error:
-            self.warning = f"レビュー集約を保存できません: {error}"
+            self.warning = f"レビュー全体を保存できません: {error}"
         self.refresh(False)
 
     def open_merged(self):
-        path, _ = QFileDialog.getOpenFileName(self.tab, "レビュー集約を開く", str(Path(self.path).parent), "レビューJSON (*.json)")
+        path, _ = QFileDialog.getOpenFileName(self.tab, "レビュー全体を復元", str(review_paths.directory(self.path)), "レビューJSON (*.json)")
         if not path or not self._ensure_edit():
             return
         try:
@@ -607,7 +667,7 @@ class NotesController(QObject):
             state = reviews.restore(value, self.pdf)
             reviews.validate_positions(state, self.tab.pdf_view._document)
             if self.review is not None or self.pending:
-                if QMessageBox.question(self.tab, "レビュー集約を開く", "現在の作業内容を選択したレビュー集約で置き換えますか？",
+                if QMessageBox.question(self.tab, "レビュー全体を復元", "保存ファイルの全員分のコメント・確認状態・取りまとめメモ・履歴で、現在の作業内容を置き換えますか？",
                         QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                         QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
                     return
@@ -615,13 +675,65 @@ class NotesController(QObject):
             self._review_changed()
             self.autosave()
         except Exception as error:
-            self.warning = f"レビュー集約を開けません: {error}"
+            self.warning = f"レビュー全体を復元できません: {error}"
             self.refresh(False)
 
     def show_history(self):
         if self.review:
             from .review_ui import show_history
             show_history(self.review, self.tab)
+
+    def restart_review(self):
+        if not self._ensure_edit():
+            return
+        if self.transaction is not None:
+            self.warning = "PDF保存の復旧記録があります。PDF保存を完了してから初期化してください。"
+            self.refresh(False)
+            return
+        dialog = RestartReviewDialog(self.tab)
+        try:
+            if dialog.exec() != QDialog.DialogCode.Accepted or not self._ensure_edit():
+                return
+            if dialog.backup.isChecked():
+                default = str(review_paths.artifact(self.path, Path(self.path).stem + "_review_before_reset.json"))
+                path = self._json_destination("初期化前のレビュー全体を保存", default)
+                if not path or not self._ensure_edit():
+                    return
+                store.atomic_json(path, self._review_snapshot())
+            if not self._ensure_edit():
+                return
+            state = reviews.restart(self.review, self.pdf, self.baseline,
+                                    self.panel.author.text(), dialog.delete_pdf_comments.isChecked())
+            reviews.validate(state)
+            changes = reviews.pdf_changes(state, self.baseline)
+            # Commit the replacement before publishing it in the live session.
+            store.atomic_json(self.sidecar, {"version": store.VERSION, "pdf": self.pdf,
+                                           "changes": changes, "review": state})
+            self.token = store.sidecar_token(self.sidecar)
+            self._autosave_timer.stop()
+            self.review = state
+            self.changes = changes
+            self.durable_review = copy.deepcopy(state)
+            self.durable_changes = copy.deepcopy(changes)
+            self.transaction = None
+            self.unsaved = False
+            self.warning = ""
+            self.tab.pdf_view.set_note_placement(False)
+            self.stage_text = ("レビューを初期化しました。付箋コメントの削除は次回のPDF保存時に反映します。"
+                               if state.get("reset_pdf_comments") else "レビューを初期化しました。PDF保存済みのコメントは残しています。")
+            for combo in (self.panel.author_filter, self.panel.status_filter, self.panel.excluded_filter):
+                combo.blockSignals(True)
+                combo.setCurrentIndex(0)
+                combo.blockSignals(False)
+            self.panel.search.blockSignals(True)
+            self.panel.search.clear()
+            self.panel.search.blockSignals(False)
+            self.refresh()
+        except Exception as error:
+            self.warning = f"レビューを初期化できません: {error}"
+            self.refresh(False)
+        finally:
+            dialog.deleteLater()
 
     def _ensure_edit(self):
         if not self.ready or not self.writable or self.busy:
@@ -824,6 +936,8 @@ class NotesController(QObject):
                 return False
         try:
             if store.canonical(destination) != store.canonical(self.path):
+                if any(os.path.exists(p) for p in store.adjacent_sidecars(destination)):
+                    raise ValueError("保存先に作業用JSONがあります。別の保存先を選んでください。")
                 if store.canonical(store.sidecar_path(destination)) == store.canonical(self.sidecar):
                     raise ValueError("保存先と元PDFの付箋メモファイル名が重複します")
                 self.destination_lock = store.EditLock(store.sidecar_path(destination))
@@ -875,6 +989,7 @@ class NotesController(QObject):
     def _finish_save(self, result):
         old_path, old_sidecar = self.path, self.sidecar
         try:
+            target_sidecar = store.existing_sidecar_path(result["path"])
             self.tab.pdf_view.reopen_after_note_save(result["path"])
             self._suspended = False
             self.path = result["path"]
@@ -892,6 +1007,7 @@ class NotesController(QObject):
             self.transaction = None
             if self.review is not None:
                 self.review["current_pdf"] = copy.deepcopy(self.pdf)
+                self.review.pop("reset_pdf_comments", None)
                 reviews.event(self.review, "PDF保存", path=self.path)
                 self.changes = reviews.pdf_changes(self.review, self.baseline)
             if result.get("index_warning"):
@@ -907,7 +1023,7 @@ class NotesController(QObject):
                 else:
                     # Durable output record precedes source-draft cleanup.
                     # A failure leaves the source transaction for recovery.
-                    new_sidecar = store.sidecar_path(self.path)
+                    new_sidecar = target_sidecar
                     if new_sidecar != old_sidecar and store.sidecar_token(new_sidecar) != self.destination_token:
                         self.writable = False
                         raise ValueError("保存先の作業用JSONが外部で変更されました")
@@ -927,7 +1043,7 @@ class NotesController(QObject):
                 self.lock.release()
                 self.lock = self.destination_lock
                 self.destination_lock = None
-            self.sidecar = store.sidecar_path(self.path)
+            self.sidecar = target_sidecar
             self.token = store.sidecar_token(self.sidecar)
             self.pathChanged.emit(old_path, self.path)
             self.tab._start_body_index()

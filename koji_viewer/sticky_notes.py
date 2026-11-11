@@ -11,6 +11,7 @@ import shutil
 import tempfile
 
 import pymupdf
+from . import review_paths
 
 
 VERSION = 1
@@ -26,11 +27,26 @@ def canonical(path):
 
 
 def sidecar_path(path):
+    return str(review_paths.artifact(path, Path(path).stem + "_review_draft.json"))
+
+
+def adjacent_sidecar_path(path):
     return str(Path(path).with_suffix("")) + "_review_draft.json"
 
 
 def legacy_sidecar_path(path):
     return str(Path(path).with_suffix("")) + "_付箋メモ.json"
+
+
+def adjacent_sidecars(path):
+    return (adjacent_sidecar_path(path), legacy_sidecar_path(path))
+
+
+def existing_sidecar_path(path):
+    for candidate in (sidecar_path(path), *adjacent_sidecars(path)):
+        if os.path.exists(candidate):
+            return candidate
+    return sidecar_path(path)
 
 
 def stat_signature(path):
@@ -58,6 +74,7 @@ def unchanged(path, signature):
 
 def atomic_json(path, value):
     """Never truncate the last durable sidecar on failed writes."""
+    review_paths.ensure_parent(path)
     fd, temporary = tempfile.mkstemp(prefix=".koji-notes-", suffix=".tmp", dir=str(Path(path).parent))
     try:
         with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as stream:
@@ -90,6 +107,7 @@ class EditLock:
             return
         if self.path in self._held:
             raise ValueError("別のタブでこのPDFの付箋を編集中です")
+        review_paths.ensure_parent(self.path)
         stream = open(self.path + ".lock", "a+b")
         try:
             stream.seek(0, os.SEEK_END)
@@ -217,9 +235,7 @@ def load_notes(path, progress=None):
     if not unchanged(path, signature):
         raise ValueError("PDFが読み込み中に変更されました")
     pdf = dict(signature, path=canonical(path), page_count=count)
-    sidecar = sidecar_path(path)
-    if not os.path.exists(sidecar) and os.path.exists(legacy_sidecar_path(path)):
-        sidecar = legacy_sidecar_path(path)
+    sidecar = existing_sidecar_path(path)
     result = {"pdf": pdf, "notes": notes, "changes": {}, "writable": writable,
               "sidecar": sidecar, "token": sidecar_token(sidecar), "warning": "", "applied": False}
     if result["token"] is None:

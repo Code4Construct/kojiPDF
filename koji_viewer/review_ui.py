@@ -34,7 +34,7 @@ def describe(value):
 class ImportDialog(QDialog):
     def __init__(self, state, paths, parent=None, document=None):
         super().__init__(parent)
-        self.setWindowTitle("レビューの取り込み")
+        self.setWindowTitle("他の記入者のコメントを取り込む")
         self.resize(740, 430)
         self.state = copy.deepcopy(state)
         self.entries = []

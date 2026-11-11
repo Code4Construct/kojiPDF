@@ -1,4 +1,4 @@
-# kojiPDF v2.6.1
+# kojiPDF v2.6.2
 
 kojiPDF is a Windows PDF utility for creating structured merged PDFs from folders that contain PDFs, Microsoft Office files, emails, images, text files, and ZIP archives.
 
@@ -25,15 +25,19 @@ It is designed for paperless meeting materials, email-data organization, and con
 
 The Viewer button is in the creator header. It opens the selected output PDF when that file already exists; otherwise it opens the Viewer for choosing a PDF. After successfully launching from the selection screen, the creator screen closes automatically and the Viewer becomes operable. Both use the same GUI process, which remains alive until the Viewer closes. Launching during PDF creation leaves the progress screen running. The Viewer isolates PDF rendering, searching, and body indexing in spawned worker processes. The Viewer modules live in `koji_viewer/` and can still be started separately with `python -m koji_viewer.main` during development.
 
-All PDF sizes use the same PyMuPDF viewer, including continuous scrolling, searchable-text selection/copying, and internal/external links. Visible page regions are rendered on demand with a 64 MiB image cache. Enter moves to the next highlighted search segment; Shift+Enter moves back. Mail/document metadata appears first and body indexes complete in the background with visible progress, preserving read state. Until indexing finishes, body-based list filtering is incomplete. Image-only pages require OCR to provide searchable/selectable text; OCR is outside this Viewer change. Range windows, welcome thumbnails, and printing also use PyMuPDF.
+All PDF sizes use the same PyMuPDF viewer, including continuous scrolling, searchable-text selection/copying, and internal/external links. Visible page regions are rendered on demand with a 64 MiB image cache. Enter moves to the next highlighted search segment; Shift+Enter moves back. Mail/document metadata appears first and body indexes complete in the background with visible progress, preserving read state. Until indexing finishes, body-based list filtering is incomplete. Image-only pages require OCR to provide searchable/selectable text; OCR is outside this Viewer change. Range windows and printing also use PyMuPDF. The start screen lists recent and favorite PDFs by filename without opening them to generate thumbnails; full paths appear in tooltips.
 
 ### Viewer document review
 
 The toolbar's **書類レビュー** button opens a resizable right panel in bookmark and mail modes. Enter **記入者**, select **＋ コメント**, click a PDF location, enter text and choose a color. Esc cancels placement. Click an icon to edit your comment; overlapping icons show a count and let you choose the comment. Double-clicking the list opens its editor. Existing PDF Text annotations remain visible and are kept unchanged until explicitly edited. Comments are excluded from body search.
 
-Changes automatically persist to `資料_review_draft.json`. Named reviews retain author IDs, comment IDs, explicit deletions, submission revisions, judgments and history after PDF saving. Older `資料_付箋メモ.json` files migrate with the original JSON retained. The PDF stays unchanged until **コメント付きPDFに保存**, which defaults to a separate output. A tab's **＊** means comments are not yet reflected in the PDF. Failed JSON writes preserve the durable file and offer retry; closing offers retry, discard only unsaved changes, or cancel.
+New review files for `資料.pdf` are grouped in the sibling `資料_review` folder: draft JSON (`資料_review_draft.json`), SQLite indexes, lock files, and default submission/merged/reset-backup JSON exports. JSON import/restore dialogs also start there. PDF outputs remain beside the PDF; you can choose other export destinations. Existing adjacent JSON/SQLite files stay in place and continue to be read; there is no automatic file relocation or cleanup. Named reviews retain author IDs, comment IDs, explicit deletions, submission revisions, judgments and history after PDF saving. Pre-existing compatibility for older `資料_付箋メモ.json` files retains the original JSON. The PDF stays unchanged until **コメント付きPDFに保存**, which defaults to a separate output. A tab's **＊** means comments are not yet reflected in the PDF. Failed JSON writes preserve the durable file and offer retry; closing offers retry, discard only unsaved changes, or cancel.
 
-Use **書き出す** to submit your comments as `資料_review_山田_v001.json`; subsequent exports increment the revision. **取り込む** previews multiple submissions, checks the original PDF's content identity, prevents duplicate/old imports and compares conflicting updates. Other authors' original text is read-only; you can set **未確認 / 確認済み / 対応不要**, add a **取りまとめメモ**, or exclude and restore a comment. Updated original text returns to 未確認 while keeping your memo. Filter by author, state, exclusion and text. The adjacent menu includes **レビュー集約を保存 / 開く** (`資料_review_merged.json`) and **レビュー履歴**.
+The review panel groups controls under **コメント**, **ファイルの受け渡し**, **絞り込み**, **検索**, and **保存・復元**. Use **コメント記入** and choose a position on the PDF to add a comment.
+
+In the **保存・復元** menu, **レビューを最初からやり直す…** clears the working review, judgments, memos and history while retaining the author name. Its confirmation offers a full-state JSON backup (enabled by default) and asks whether to delete PDF-saved sticky comments (disabled by default). Keeping PDF comments restores them unchanged from the PDF. Deleting schedules all Text sticky comments, including those created in other software, for removal on the next explicit PDF save; highlights and other annotation types remain. Reset itself never writes the PDF or changes earlier exported files. Canceling the backup destination or a write failure aborts reset.
+
+Use **現在の記入者のコメントを書き出す** to submit only the current author's comments, including updates/deletions regardless of display filters, as `資料_review_山田_v001.json`; subsequent exports increment the revision. **他の記入者のコメントを取り込む** previews multiple submissions, checks the original PDF's content identity, prevents duplicate/old imports and compares conflicting updates. Other authors' original text is read-only; you can set **未確認 / 確認済み / 対応不要**, add a **取りまとめメモ**, or exclude and restore a comment. Updated original text returns to 未確認 while keeping your memo. Filter by author, state, exclusion and text. The adjacent menu includes **レビュー全体を保存 / レビュー全体を復元** (`資料_review_merged.json`) and **レビュー履歴**. Full restore replaces the current work with the saved state, including all authors' comments, judgments, memos, exclusions, author identity and history; it does not merge with current work.
 
 PDF outputs use `資料_review_山田_v001.pdf` or `資料_review_merged.pdf`; author, original text, status and coordinator memo are included in standard PDF notes. Continue editing the output PDF together with its retained draft JSON, or open a matching exported merged JSON. Keep JSON records for further imports: PDF alone does not retain submission/deletion history. The worker process verifies a staging PDF before atomic replacement, preserving pages, bookmarks, links and unrelated annotations. A source draft is removed only after the output draft is durable; interrupted saves recover through the recorded output hash. OS locks and file tokens prevent concurrent overwrites. `.json.lock` file presence alone does not mean a lock is active. Extracted page-range windows do not edit comments.
 
@@ -99,6 +103,19 @@ $env:PATH = "$PWD\.venv\Scripts;$env:PATH"
 ```
 
 The build script checks that `python` resolves to Python 3.12.
+
+### Opening PDFs after MSI installation
+
+The updated MSI registers **kojiPDFviewer** as an optional PDF application without
+changing your current default. To open PDFs by double-click, right-click a PDF,
+open **Properties**, choose **Change** for the opening application, and select
+**kojiPDFviewer**. You can also choose it from **Open with** or Windows Default
+Apps. If browsing for an executable, select the installed `kojiPDFv2.exe`.
+Both executable and MSI must be rebuilt to deploy this change.
+
+Launching `kojiPDFv2.exe "C:\Documents\sample.pdf"` opens the Viewer directly.
+Launching the application without arguments still opens the creator; existing
+JSON connector launch arguments retain their behavior.
 
 In VS Code, choose `.venv\Scripts\python.exe` with **Python: Select Interpreter**. The system Python 3.12 installation does not automatically contain this project's packages.
 

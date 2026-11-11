@@ -10,6 +10,7 @@ import re
 import uuid
 
 from . import sticky_notes as store
+from . import review_paths
 import pymupdf
 
 STATUSES = ("未確認", "確認済み", "対応不要")
@@ -35,6 +36,18 @@ def create(pdf, notes):
 
 def event(state, action, **data):
     state["history"].append(dict(at=now(), action=action, **copy.deepcopy(data)))
+
+
+def restart(previous, pdf, baseline, author_name, delete_pdf_comments):
+    """New review identity; optional PDF deletion remains a deferred save delta."""
+    state = create(pdf, {} if delete_pdf_comments else baseline)
+    if previous is not None:
+        state["document"] = copy.deepcopy(previous["document"])
+    state["author"]["name"] = author_name.strip()
+    state["history"] = []
+    if delete_pdf_comments:
+        state["reset_pdf_comments"] = True
+    return state
 
 
 def set_author(state, name):
@@ -110,6 +123,8 @@ def _positive(value):
 def validate(value):
     if not isinstance(value, dict) or type(value.get("version")) is not int or value["version"] != 2 or value.get("kind") not in ("submission", "merged"):
         raise ValueError("未対応のレビューJSON形式です")
+    if "reset_pdf_comments" in value and (value["kind"] != "merged" or type(value["reset_pdf_comments"]) is not bool):
+        raise ValueError("PDFコメント初期化の指定が不正です")
     document = value.get("document")
     if not isinstance(document, dict) or not _text(document.get("name")) or not _positive(document.get("page_count")) or not isinstance(document.get("sha256"), str) or not re.fullmatch(r"[0-9a-f]{64}", document["sha256"]):
         raise ValueError("対象PDFの識別情報が不正です")
@@ -185,7 +200,8 @@ def output_path(state, pdf_path, kind, extension, revision=None):
         suffix = f"_review_{author}_v{revision:03d}"
     else:
         suffix = "_review_merged"
-    return str(Path(pdf_path).parent / (name + suffix + extension))
+    parent = review_paths.directory(pdf_path) if extension.lower() == ".json" else Path(pdf_path).parent
+    return str(parent / (name + suffix + extension))
 
 
 def matching(document, other):
@@ -204,7 +220,7 @@ def digest(value):
 def merge(state, incoming, choices=None):
     validate(incoming)
     if incoming["kind"] != "submission":
-        raise ValueError("集約JSONは「レビュー集約を開く」で復元してください")
+        raise ValueError("集約JSONは「レビュー全体を復元」で復元してください")
     if not matching(state["document"], incoming["document"]):
         raise ValueError("対象PDFが異なります")
     choices = choices or {}
@@ -276,7 +292,10 @@ def annotation_text(comment):
 
 
 def pdf_changes(state, baseline):
-    changes = {}
+    changes = {
+        identity: {"original": copy.deepcopy(note), "note": None}
+        for identity, note in baseline.items()
+    } if state.get("reset_pdf_comments", False) else {}
     by_nm = {n["nm"]: n for n in baseline.values() if n["nm"]}
     for identity, comment in state["comments"].items():
         original = by_nm.get(identity) or baseline.get(state["bindings"].get(identity, ""))
@@ -295,6 +314,8 @@ def pdf_changes(state, baseline):
             same = note is not None and all(note[k] == original[k] for k in ("id", "page", "xref", "order", "nm", "text")) and all(abs(note[k] - original[k]) < .01 for k in ("x", "y")) and all(abs(a - b) < .001 for a, b in zip(note["color"], original["color"]))
             if not same:
                 changes[key] = {"original": copy.deepcopy(original), "note": note}
+            else:
+                changes.pop(key, None)
         elif note:
             changes[identity] = {"original": None, "note": note}
     return changes

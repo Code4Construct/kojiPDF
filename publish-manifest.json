@@ -22,6 +22,7 @@
     "koji_viewer/pdf_jobs.py",
     "koji_viewer/pdf_view.py",
     "koji_viewer/review.py",
+    "koji_viewer/review_paths.py",
     "koji_viewer/review_ui.py",
     "koji_viewer/sticky_notes.py",
     "koji_viewer/sticky_ui.py",
