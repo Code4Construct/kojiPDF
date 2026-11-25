@@ -316,7 +316,11 @@ class NotesController(QObject):
         self._autosave_timer.setSingleShot(True)
         self._autosave_timer.timeout.connect(self.autosave)
         self.attach(tab)
-        self._start("notes_load", self.path)
+        if review_paths.enabled:
+            self._start("notes_load", self.path)
+        else:
+            self.stage_text = review_paths.DISABLED_HINT
+            self.panel.setEnabled(False)
 
     @property
     def pending(self):
@@ -404,7 +408,7 @@ class NotesController(QObject):
                     raise ValueError("付箋メモJSONが別のアプリで変更されました")
                 saved = result["saved_result"]
                 if store.canonical(saved["path"]) != store.canonical(self.path):
-                    target_sidecar = store.existing_sidecar_path(saved["path"])
+                    target_sidecar = store.sidecar_path(saved["path"])
                     self.destination_lock = store.EditLock(target_sidecar)
                     self.destination_lock.acquire()
                     if store.sidecar_token(target_sidecar) is not None:
@@ -437,8 +441,6 @@ class NotesController(QObject):
                 self.writable = False
         elif self.changes:
             self.stage_text = "前回の未反映メモを復元しました"
-        if self.writable and self.sidecar == store.legacy_sidecar_path(self.path):
-            self._migrate_legacy()
         self.refresh()
 
     def refresh(self, list_changed=True):
@@ -522,6 +524,8 @@ class NotesController(QObject):
         self.changed.emit()
 
     def show_panel(self):
+        if not review_paths.enabled:
+            return
         self.panel.show()
         self.tab.notes_splitter.setSizes([max(300, self.tab.notes_splitter.width() - 280), 280])
         self.changed.emit()
@@ -555,34 +559,6 @@ class NotesController(QObject):
         self.stage_text = ""
         self.refresh()
         self._autosave_timer.start(0)
-
-    def _migrate_legacy(self):
-        old_sidecar = self.sidecar
-        new_sidecar = store.sidecar_path(self.path)
-        new_lock = store.EditLock(new_sidecar)
-        try:
-            if not self._ensure_edit():
-                return
-            self._activate_review()
-            self.refresh()
-            new_lock.acquire()
-            if store.sidecar_token(new_sidecar) is not None:
-                raise ValueError("新しい作業用JSONがすでに存在します")
-            store.atomic_json(new_sidecar, self._payload())
-            # Verify the durable new record before releasing the legacy lock.
-            store.validate_sidecar(json.loads(Path(new_sidecar).read_text(encoding="utf-8")), self.path, self.pdf["page_count"])
-            self.lock.release()
-            self.lock = new_lock
-            self.sidecar = new_sidecar
-            self.token = store.sidecar_token(new_sidecar)
-            self.durable_changes = copy.deepcopy(self.changes)
-            self.durable_review = copy.deepcopy(self.review)
-            self.unsaved = False
-            self.stage_text = "旧付箋メモを移行しました（元JSONは保持）"
-        except Exception as error:
-            if self.sidecar == old_sidecar:
-                new_lock.release()
-            self.warning = f"旧付箋メモの移行に失敗: {error}"
 
     def set_author(self):
         name = self.panel.author.text().strip()
@@ -618,9 +594,7 @@ class NotesController(QObject):
         path, _ = QFileDialog.getSaveFileName(self.tab, caption, default, "レビューJSON (*.json)")
         if path and not path.lower().endswith(".json"):
             path += ".json"
-        if path and store.canonical(path) in (
-            store.canonical(p) for p in (self.sidecar, *store.adjacent_sidecars(self.path))
-        ):
+        if path and store.canonical(path) == store.canonical(self.sidecar):
             raise ValueError("提出・集約JSONは作業用JSONと別名にしてください")
         return path
 
@@ -936,8 +910,6 @@ class NotesController(QObject):
                 return False
         try:
             if store.canonical(destination) != store.canonical(self.path):
-                if any(os.path.exists(p) for p in store.adjacent_sidecars(destination)):
-                    raise ValueError("保存先に作業用JSONがあります。別の保存先を選んでください。")
                 if store.canonical(store.sidecar_path(destination)) == store.canonical(self.sidecar):
                     raise ValueError("保存先と元PDFの付箋メモファイル名が重複します")
                 self.destination_lock = store.EditLock(store.sidecar_path(destination))
@@ -989,7 +961,7 @@ class NotesController(QObject):
     def _finish_save(self, result):
         old_path, old_sidecar = self.path, self.sidecar
         try:
-            target_sidecar = store.existing_sidecar_path(result["path"])
+            target_sidecar = store.sidecar_path(result["path"])
             self.tab.pdf_view.reopen_after_note_save(result["path"])
             self._suspended = False
             self.path = result["path"]
@@ -1028,7 +1000,7 @@ class NotesController(QObject):
                         self.writable = False
                         raise ValueError("保存先の作業用JSONが外部で変更されました")
                     store.atomic_json(new_sidecar, self._payload())
-                    if new_sidecar != old_sidecar and old_sidecar != store.legacy_sidecar_path(old_path):
+                    if new_sidecar != old_sidecar:
                         try:
                             os.unlink(old_sidecar)
                         except FileNotFoundError:

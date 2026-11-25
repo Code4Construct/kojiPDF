@@ -189,6 +189,7 @@ BUILT_IN_PRESETS = {
     },
     "asp": {
         **DEFAULT_UI_SETTINGS,
+        "keep_pdf_extension": True,
         "convert_office": False,
         "resize_pdf": False,
         "resize_size": "A4",
@@ -217,8 +218,8 @@ def settings_file_path():
 
 TRANSLATIONS = {
             "en": {
-                "window_title": "kojiPDF v2.6.2 - Built with Python by Code4Construct",
-                "title": "kojiPDF v2.6.2",
+                "window_title": "kojiPDF v2.6.3 - Built with Python by Code4Construct",
+                "title": "kojiPDF v2.6.3",
                 "subtitle": "Select a folder and output PDF file, then create a structured inspection PDF.",
                 "notice": (
                     "- Useful for creating paperless meeting materials with PDFs, organizing email data, and preparing construction document inspections (ASP support)\n"
@@ -324,8 +325,8 @@ TRANSLATIONS = {
                 "temp_folder_path_line": "The following temporary folder will be created during conversion.\n{path}",
             },
             "ja": {
-                "window_title": "kojiPDF v2.6.2 - Built with Python by Code4Construct",
-                "title": "kojiPDF v2.6.2",
+                "window_title": "kojiPDF v2.6.3 - Built with Python by Code4Construct",
+                "title": "kojiPDF v2.6.3",
                 "subtitle": "フォルダとPDF保存先を選択し、工事検査用PDFファイルを作成します。",
                 "notice": (
                     "・PDFを活用したペーパーレス会議資料の作成、メールデータ整理、工事書類検査（ASP対応）に役立ちます。\n"

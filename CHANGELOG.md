@@ -2,6 +2,15 @@
 
 This repository now consolidates the separate kojiPDF version repositories into the main `Code4Construct/kojiPDF` repository.
 
+## v2.6.3
+
+- Make Viewer external storage optional and off by default; keep browsing and search available using temporary indexes.
+- Disable mail read tracking and document review when external storage is off, and show the current storage state.
+- Replace the icon-only file control with a labeled File menu and add a separate Settings control.
+- Read review drafts and persistent indexes only from the dedicated `_review` folder; stop looking up or migrating legacy adjacent files, leaving those files unchanged.
+- Enable keeping `.pdf` in bookmark names when applying the construction inspection preset.
+- Update application displays, executable metadata and installer version definitions to v2.6.3. Rebuilt binaries and installed-app verification remain pending.
+
 ## v2.6.2
 
 - Sort ordinary folders and files together by their original names while keeping expanded mail after ordinary items.

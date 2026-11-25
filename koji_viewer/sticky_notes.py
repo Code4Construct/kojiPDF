@@ -30,25 +30,6 @@ def sidecar_path(path):
     return str(review_paths.artifact(path, Path(path).stem + "_review_draft.json"))
 
 
-def adjacent_sidecar_path(path):
-    return str(Path(path).with_suffix("")) + "_review_draft.json"
-
-
-def legacy_sidecar_path(path):
-    return str(Path(path).with_suffix("")) + "_付箋メモ.json"
-
-
-def adjacent_sidecars(path):
-    return (adjacent_sidecar_path(path), legacy_sidecar_path(path))
-
-
-def existing_sidecar_path(path):
-    for candidate in (sidecar_path(path), *adjacent_sidecars(path)):
-        if os.path.exists(candidate):
-            return candidate
-    return sidecar_path(path)
-
-
 def stat_signature(path):
     stat = os.stat(path)
     return {"size": stat.st_size, "mtime_ns": stat.st_mtime_ns}
@@ -235,7 +216,7 @@ def load_notes(path, progress=None):
     if not unchanged(path, signature):
         raise ValueError("PDFが読み込み中に変更されました")
     pdf = dict(signature, path=canonical(path), page_count=count)
-    sidecar = existing_sidecar_path(path)
+    sidecar = sidecar_path(path)
     result = {"pdf": pdf, "notes": notes, "changes": {}, "writable": writable,
               "sidecar": sidecar, "token": sidecar_token(sidecar), "warning": "", "applied": False}
     if result["token"] is None:

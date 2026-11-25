@@ -113,12 +113,9 @@ def index_path_for(pdf_path: str, mode: str = "mail") -> str:
 
 
 def existing_index_path(pdf_path, mode="mail"):
-    target = index_path_for(pdf_path, mode)
-    suffix = ".document.index.sqlite3" if mode == "document" else ".index.sqlite3"
-    old = str(pdf_path) + suffix
-    if not os.path.exists(target) and os.path.isfile(old):
-        return old
-    return target
+    if not review_paths.enabled:
+        return review_paths.temporary_index(pdf_path, mode)
+    return index_path_for(pdf_path, mode)
 
 
 def _prepare_index_path(pdf_path, mode):

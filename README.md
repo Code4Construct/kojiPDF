@@ -1,4 +1,4 @@
-# kojiPDF v2.6.2
+# kojiPDF v2.6.3
 
 kojiPDF is a Windows PDF utility for creating structured merged PDFs from folders that contain PDFs, Microsoft Office files, emails, images, text files, and ZIP archives.
 
@@ -31,7 +31,7 @@ All PDF sizes use the same PyMuPDF viewer, including continuous scrolling, searc
 
 The toolbar's **書類レビュー** button opens a resizable right panel in bookmark and mail modes. Enter **記入者**, select **＋ コメント**, click a PDF location, enter text and choose a color. Esc cancels placement. Click an icon to edit your comment; overlapping icons show a count and let you choose the comment. Double-clicking the list opens its editor. Existing PDF Text annotations remain visible and are kept unchanged until explicitly edited. Comments are excluded from body search.
 
-New review files for `資料.pdf` are grouped in the sibling `資料_review` folder: draft JSON (`資料_review_draft.json`), SQLite indexes, lock files, and default submission/merged/reset-backup JSON exports. JSON import/restore dialogs also start there. PDF outputs remain beside the PDF; you can choose other export destinations. Existing adjacent JSON/SQLite files stay in place and continue to be read; there is no automatic file relocation or cleanup. Named reviews retain author IDs, comment IDs, explicit deletions, submission revisions, judgments and history after PDF saving. Pre-existing compatibility for older `資料_付箋メモ.json` files retains the original JSON. The PDF stays unchanged until **コメント付きPDFに保存**, which defaults to a separate output. A tab's **＊** means comments are not yet reflected in the PDF. Failed JSON writes preserve the durable file and offer retry; closing offers retry, discard only unsaved changes, or cancel.
+New review files for `資料.pdf` are grouped in the sibling `資料_review` folder: draft JSON (`資料_review_draft.json`), SQLite indexes, lock files, and default submission/merged/reset-backup JSON exports. JSON import/restore dialogs also start there. PDF outputs remain beside the PDF; you can choose other export destinations. Only the dedicated review folder is read automatically. Existing adjacent JSON/SQLite files are ignored and left unchanged; there is no automatic migration or cleanup. Named reviews retain author IDs, comment IDs, explicit deletions, submission revisions, judgments and history after PDF saving. The PDF stays unchanged until **コメント付きPDFに保存**, which defaults to a separate output. A tab's **＊** means comments are not yet reflected in the PDF. Failed JSON writes preserve the durable file and offer retry; closing offers retry, discard only unsaved changes, or cancel.
 
 The review panel groups controls under **コメント**, **ファイルの受け渡し**, **絞り込み**, **検索**, and **保存・復元**. Use **コメント記入** and choose a position on the PDF to add a comment.
 

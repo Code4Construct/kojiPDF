@@ -65,7 +65,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from . import db, outlook_reply, parser
+from . import db, outlook_reply, parser, review_paths
 from .pdf_view import PdfPageView, ZoomMode
 from .pdf_jobs import PdfJob
 from .sticky_ui import NotesController
@@ -371,7 +371,7 @@ class MailItemDelegate(QStyledItemDelegate):
         painter.setPen(QColor("#E9EBEF"))
         painter.drawLine(rect.left() + 20, rect.bottom(), rect.right() - 20, rect.bottom())
 
-        if mail.is_mail and not mail.is_read:
+        if mail.is_mail and (review_paths.enabled and not mail.is_read):
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(QBrush(QColor("#2F6FE4")))
             painter.drawEllipse(QRect(rect.left() + 6, rect.top() + rect.height() // 2 - 4, 8, 8))
@@ -395,9 +395,9 @@ class MailItemDelegate(QStyledItemDelegate):
         date_w = fm_date.horizontalAdvance(date_text)
 
         y, y2, y3, y4 = self._row_positions(rect)
-        f1 = QFont(); f1.setBold(not mail.is_read); f1.setPointSize(10)
+        f1 = QFont(); f1.setBold((review_paths.enabled and not mail.is_read)); f1.setPointSize(10)
         painter.setFont(f1)
-        painter.setPen(QColor("#16181D") if not mail.is_read else QColor("#4A4F58"))
+        painter.setPen(QColor("#16181D") if (review_paths.enabled and not mail.is_read) else QColor("#4A4F58"))
         sender_rect = QRect(text_left, y, max(10, text_width - date_w - 12), 20)
         painter.drawText(sender_rect, Qt.AlignmentFlag.AlignVCenter,
                           QFontMetrics(f1).elidedText(mail.sender_short or "(差出人不明)",
@@ -407,9 +407,9 @@ class MailItemDelegate(QStyledItemDelegate):
         date_rect = QRect(text_right - date_w, y, date_w, 20)
         painter.drawText(date_rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight, date_text)
 
-        f2 = QFont(); f2.setPointSize(10); f2.setBold(not mail.is_read)
+        f2 = QFont(); f2.setPointSize(10); f2.setBold((review_paths.enabled and not mail.is_read))
         painter.setFont(f2)
-        painter.setPen(QColor("#2A2D33") if not mail.is_read else QColor("#6B7078"))
+        painter.setPen(QColor("#2A2D33") if (review_paths.enabled and not mail.is_read) else QColor("#6B7078"))
         subj_rect = QRect(text_left, y2, text_width, 19)
         subj = mail.subject or "(件名なし)"
         painter.drawText(subj_rect, Qt.AlignmentFlag.AlignVCenter,
@@ -1058,6 +1058,9 @@ class BasePdfTab(QWidget):
         copy_action.setEnabled(bool(self.pdf_view.selected_text()))
         copy_action.triggered.connect(self.pdf_view.copy_selection)
         note_action = menu.addAction("書類レビューを表示")
+        note_action.setEnabled(review_paths.enabled)
+        note_action.setToolTip(review_paths.DISABLED_HINT if not review_paths.enabled else "")
+        menu.setToolTipsVisible(True)
         note_action.triggered.connect(self.notes.show_panel)
         menu.addSeparator()
         sidebar_visible = self.sidebar.isVisible()
@@ -1506,7 +1509,7 @@ class PdfTab(BasePdfTab):
             if mail is None:
                 continue
             font = QFont("", 10)
-            font.setBold(not mail.is_read or not mail.is_mail)
+            font.setBold((review_paths.enabled and not mail.is_read) or not mail.is_mail)
             metrics = QFontMetrics(font)
             attachments = mail.attachment_list()
             chip_width = sum(min(small.horizontalAdvance(f"📎 {att.name}") + 16,
@@ -1648,7 +1651,7 @@ class PdfTab(BasePdfTab):
         QTimer.singleShot(0, lambda: self.pdf_view.pageNavigator().jump(start_page - 1, QPointF(0, 0)))
 
     def _mark_read(self, mail: "db.MailRow", read: bool = True):
-        if not mail.is_mail:
+        if not review_paths.enabled or not mail.is_mail:
             return
         if mail.is_read == read:
             return
@@ -1661,6 +1664,9 @@ class PdfTab(BasePdfTab):
         if not index.isValid():
             menu = QMenu(self)
             action = menu.addAction("すべて既読にする")
+            action.setEnabled(review_paths.enabled)
+            action.setToolTip(review_paths.DISABLED_HINT)
+            menu.setToolTipsVisible(True)
             action.triggered.connect(self._mark_all_read)
             menu.exec(self.list_view.viewport().mapToGlobal(pos))
             return
@@ -1672,6 +1678,9 @@ class PdfTab(BasePdfTab):
         menu = QMenu(self)
         if mail.is_mail:
             read_action = menu.addAction("未読にする" if mail.is_read else "既読にする")
+            read_action.setEnabled(review_paths.enabled)
+            read_action.setToolTip(review_paths.DISABLED_HINT)
+            menu.setToolTipsVisible(True)
             read_action.triggered.connect(lambda: self._mark_read(mail, not mail.is_read))
             menu.addSeparator()
 
@@ -1754,7 +1763,7 @@ class PdfTab(BasePdfTab):
                 f"pywin32がインストールされているか確認してください。\n\n詳細: {e}")
 
     def _mark_all_read(self):
-        if not self.db_path:
+        if not review_paths.enabled or not self.db_path:
             return
         db.mark_all_read(self.db_path, True)
         for row in self.model.all_rows():
@@ -2268,6 +2277,7 @@ class MainWindow(QMainWindow):
             self.resize(1440, 900)
 
         self.settings = QSettings("ukawa", "kojiPDFviewer")
+        review_paths.enabled = self.settings.value("externalDataEnabled", False, type=bool)
         # 旧アプリ名で保存された履歴・お気に入りを初回起動時に引き継ぐ。
         legacy_settings = QSettings("ukawa", "MailPDFViewer")
         for key in ("recentFiles", "favoriteFiles"):
@@ -2288,6 +2298,11 @@ class MainWindow(QMainWindow):
 
         self.status = QStatusBar()
         self.setStatusBar(self.status)
+        self.storage_status = QPushButton()
+        self.storage_status.setFlat(True)
+        self.storage_status.setToolTip("外部データ保存の設定を開く")
+        self.storage_status.clicked.connect(self.settings_button.showMenu)
+        self.status.addPermanentWidget(self.storage_status)
 
         self.tabs = QTabWidget()
         self.tabs.setTabsClosable(True)
@@ -2332,17 +2347,31 @@ class MainWindow(QMainWindow):
         self.notes_button.setCheckable(True)
         self.notes_button.clicked.connect(self._toggle_notes)
 
-        open_action = QAction(style.standardIcon(QStyle.StandardPixmap.SP_DialogOpenButton),
-                               "PDFを開く", self)
-        open_action.triggered.connect(self.open_pdf_dialog)
         self.file_button = QToolButton()
-        self.file_button.setDefaultAction(open_action)
-        self.file_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
-        self.file_button.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
-        self.file_button.setAccessibleName("PDFを開く・その他のファイル操作")
+        self.file_button.setText("ファイル ▼")
+        self.file_button.setAccessibleName("ファイル")
+        self.file_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self.file_menu = QMenu(self.file_button)
         self.file_button.setMenu(self.file_menu)
-        toolbar.addWidget(self.file_button)
+        toolbar.insertWidget(toolbar.actions()[0], self.file_button)
+        open_action = self.file_menu.addAction("PDFを開く…")
+        open_action.setShortcut(QKeySequence("Ctrl+O"))
+        open_action.triggered.connect(self.open_pdf_dialog)
+        self.addAction(open_action)
+        self.file_menu.addSeparator()
+
+        self.settings_button = QToolButton()
+        self.settings_button.setText("設定")
+        self.settings_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        settings_menu = QMenu(self.settings_button)
+        self.storage_action = settings_menu.addAction("外部データ保存フォルダを使用する")
+        self.storage_action.setCheckable(True)
+        self.storage_action.setChecked(review_paths.enabled)
+        self.storage_action.setToolTip("PDFと同じ場所に「PDF名_review」フォルダを作成し、メールの既読状態と書類レビューを保存します。")
+        settings_menu.setToolTipsVisible(True)
+        self.storage_action.triggered.connect(self._change_external_storage)
+        self.settings_button.setMenu(settings_menu)
+        toolbar.insertWidget(toolbar.actions()[1], self.settings_button)
 
         self.recent_menu = self.file_menu.addMenu("最近使ったPDF")
         self.recent_menu.aboutToShow.connect(self._populate_recent_menu)
@@ -2743,6 +2772,8 @@ class MainWindow(QMainWindow):
             new_tab.pdf_view.start_search(new_tab.current_query)
 
     def _unread_suffix(self, tab: BasePdfTab) -> str:
+        if not review_paths.enabled:
+            return ""
         count = tab.unread_count()
         return f" (未読 {count})" if count else ""
 
@@ -2801,7 +2832,9 @@ class MainWindow(QMainWindow):
         self.pan_button.setEnabled(interactive)
         self.pan_button.setChecked(has_tab and tab.pdf_view.pan_mode)
         self.reindex_action.setEnabled(has_tab and not tab.notes.busy)
-        self.notes_button.setEnabled(has_tab)
+        self.storage_status.setText("外部データ保存：" + ("オン" if review_paths.enabled else "オフ"))
+        self.notes_button.setEnabled(has_tab and review_paths.enabled)
+        self.notes_button.setToolTip("書類レビューを表示" if review_paths.enabled else review_paths.DISABLED_HINT)
         self.notes_button.setChecked(has_tab and not tab.notes.panel.isHidden())
         self._update_search_button()
 
@@ -2834,6 +2867,49 @@ class MainWindow(QMainWindow):
         self.next_page_button.setEnabled(total > 0 and current < total - 1)
 
     # --------------------------------------------------------------- 動作
+    def _change_external_storage(self, enabled):
+        tabs = [self.tabs.widget(i) for i in range(self.tabs.count())
+                if isinstance(self.tabs.widget(i), BasePdfTab)]
+        if any(tab.notes.busy for tab in tabs):
+            QMessageBox.information(self, "設定を変更できません", "レビューの処理が完了してから変更してください。")
+            self.storage_action.setChecked(review_paths.enabled)
+            return
+        if not enabled and any(tab.notes.unsaved or tab.notes.pending for tab in tabs):
+            answer = QMessageBox.question(
+                self, "外部データ保存をオフにする",
+                "編集中のレビューがあります。変更を外部データに保存してからオフにしますか？\n既存の保存データは削除しません。",
+                QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Cancel)
+            if answer == QMessageBox.StandardButton.Cancel:
+                self.storage_action.setChecked(True)
+                return
+            if answer == QMessageBox.StandardButton.Save:
+                if any(not tab.notes.autosave() for tab in tabs if tab.notes.unsaved or tab.notes.pending):
+                    QMessageBox.warning(self, "保存できません", "レビューを保存できなかったため、設定の変更を中止しました。")
+                    self.storage_action.setChecked(True)
+                    return
+        # Stop workers before switching the index paths and retiring controllers.
+        for tab in tabs:
+            tab._index_job.stop()
+            tab._reply_job.stop()
+            tab.notes.close()
+        review_paths.enabled = enabled
+        self.storage_action.setChecked(enabled)
+        self.settings.setValue("externalDataEnabled", enabled)
+        for tab in tabs:
+            page = tab.current_page()
+            tab.notes.panel.setParent(None)
+            tab.notes.panel.deleteLater()
+            tab.notes.deleteLater()
+            tab.pdf_view.set_notes({})
+            tab.notes = NotesController(tab)
+            tab.notes_splitter.addWidget(tab.notes.panel)
+            self._connect_notes(tab)
+            tab.load(status_cb=self.status.showMessage)
+            tab.pdf_view.pageNavigator().jump(page, QPointF(0, 0))
+        self._update_controls_enabled()
+        self.status.showMessage("外部データ保存：" + ("オン" if enabled else "オフ"), 5000)
+
     def reindex_current(self):
         tab = self._current_tab()
         if isinstance(tab, BasePdfTab):
